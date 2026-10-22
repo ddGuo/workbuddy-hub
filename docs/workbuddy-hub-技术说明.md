@@ -235,7 +235,8 @@ POST {endpoint}/v2/billing/meter/daily-checkin
 
 - 后台线程每 5 秒扫一次最近 24 小时内更新过的会话；`scan_session_cached` 按文件 mtime 命中缓存，
   没变化时一轮只剩 stat 的开销。
-- 新信号通过 `limit-detected` 事件推到界面，右下角提醒里可以直接切号或忽略。
+- 新信号通过 `limit-detected` 事件推到界面，右下角提醒里可以直接切号或忽略；
+  窗口不在前台时用 `tauri-plugin-notification` 再发一条系统通知（带模型名与恢复时间）。
 - 归属用 `~/.workbuddy-hub/auth_seen.json` 的时间线校正：切号会把任务归集到新账号，
   早于「当前账号生效时间」的旧限流不再算到新账号头上。
 - 需要当场确认时，`model_probe::probe()` 用账号凭据向 `/v2/chat/completions` 发一次

@@ -185,10 +185,11 @@ with the error text buried mid-conversation. Matching only accepts upstream erro
 does not trigger a false alarm.
 
 Detection runs in the background every 5 seconds (session files are cached by mtime), and a new
-limit pops a **bottom-right notification**: "switch to xxx" performs the switch right away
+limit pops a **bottom-right notification** (plus a system notification when the window is not in
+the foreground, naming the model): "switch to xxx" performs the switch right away
 (falling back to the confirmation dialog when tasks are running), while "verify" sends a real
 `max_tokens=1` request with that account's credentials to confirm with the server.
-Hovering the "switch" button lists the models currently limited for that account.
+Hovering the "switch" button shows a popover listing the models currently limited for that account.
 
 Manual probe: `hub probe-model --uid <prefix> --model <model id>`.
 

@@ -160,6 +160,20 @@ export default function App() {
   });
   const [quickSwitching, setQuickSwitching] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  const [hoverTip, setHoverTip] = useState<{
+    text: string;
+    left: number;
+    top: number;
+  } | null>(() => {
+    // 浏览器预览用：?tip=1 展示悬停提示
+    if (isTauri) return null;
+    if (new URLSearchParams(window.location.search).get('tip') !== '1') return null;
+    return {
+      text: 'Deepseek-V4.1-Flash · 10-23 09:51 恢复\nKimi-K2 · 10-23 12:00 恢复',
+      left: 250,
+      top: 335,
+    };
+  });
   const [cardsOpen, setCardsOpen] = useState(
     () => localStorage.getItem('hub.cardsOpen') !== '0',
   );
@@ -931,7 +945,18 @@ export default function App() {
                     ) : (
                       <span
                         className="switch-wrap"
-                        title={[blocked, limitTip(a.uid)].filter(Boolean).join('\n') || undefined}
+                        onMouseEnter={(e) => {
+                          const text = [blocked, limitTip(a.uid)].filter(Boolean).join('\n');
+                          if (!text) return;
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setHoverTip({
+                            text,
+                            // 放在按钮右侧，避免盖住账号行导致看不清
+                            left: Math.min(r.right + 10, window.innerWidth - 260),
+                            top: r.top,
+                          });
+                        }}
+                        onMouseLeave={() => setHoverTip(null)}
                       >
                         <button
                           className="mini"
@@ -1212,6 +1237,14 @@ export default function App() {
         />
       )}
 
+      {hoverTip && (
+        <div className="hover-tip" style={{ left: hoverTip.left, top: hoverTip.top }}>
+          {hoverTip.text.split('\n').map((line, i) => (
+            <div key={i}>{line}</div>
+          ))}
+        </div>
+      )}
+
       {alert && (
         <div className="limit-toast" role="alert">
           <div className="limit-toast-head">
@@ -1225,7 +1258,7 @@ export default function App() {
             <span className="sep">·</span>
             {alert.signal.kind === 'account'
               ? '账号额度'
-              : (alert.signal.model ?? '单模型')}
+              : (alert.signal.model ?? '未知模型')}
             {alert.signal.reset_at ? (
               <>
                 <span className="sep">·</span>

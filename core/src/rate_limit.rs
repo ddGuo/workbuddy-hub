@@ -116,6 +116,22 @@ pub fn classify(text: &str) -> Option<(LimitKind, Option<i64>)> {
     Some((kind, parse_reset_time(text)))
 }
 
+/// 从错误原文里提取模型名，如「当前您在Deepseek-V4.1-Flash模型的使用量…」。
+pub fn extract_model(text: &str) -> Option<String> {
+    for marker in ["您在", "在"] {
+        if let Some(i) = text.find(marker) {
+            let rest = &text[i + marker.len()..];
+            if let Some(j) = rest.find("模型") {
+                let name = rest[..j].trim();
+                if !name.is_empty() && name.chars().count() <= 40 && !name.contains(' ') {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 fn starts_with_status(text: &str, code: &str) -> bool {
     let Some(rest) = text.strip_prefix(code) else {
         return false;
@@ -236,7 +252,8 @@ pub fn scan_session(jsonl: &Path, session_id: &str, uid: &str) -> Result<Option<
                 .get("providerData")
                 .and_then(|p| p.get("model"))
                 .and_then(|m| m.as_str())
-                .map(str::to_string);
+                .map(str::to_string)
+                .or_else(|| extract_model(&collected));
             return Ok(Some(LimitSignal {
                 session_id: session_id.to_string(),
                 uid: uid.to_string(),
@@ -375,6 +392,12 @@ mod tests {
         assert_eq!(sig.model.as_deref(), Some("glm-5.2"));
         assert_eq!(sig.detected_at, 1_792_374_000);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extracts_model_from_message() {
+        let text = "当前您在Deepseek-V4.1-Flash模型的使用量已超出频率限制";
+        assert_eq!(extract_model(text).as_deref(), Some("Deepseek-V4.1-Flash"));
     }
 
     #[test]

@@ -353,11 +353,17 @@ fn scan_limits_blocking() -> Result<Vec<rate_limit::LimitSignal>, String> {
     let mut signals = daemon::scan(&tasks, &projects, &mut state);
 
     // 切号时任务会被归集到新账号，旧限流不该算到新账号头上：
-    // 只保留发生在「当前账号生效之后」的信号。
-    if let Some(seen) = client_compat::auth_file()
-        .and_then(|p| auth_seen::refresh(&p).ok().flatten())
-    {
-        signals.retain(|s| !(s.uid == seen.uid && s.detected_at < seen.since));
+    // 按「消息时间当时是谁在线」重新归属，而不是丢弃。
+    if let Some(auth) = client_compat::auth_file() {
+        let _ = auth_seen::refresh(&auth);
+        if let Ok(path) = auth_seen::path() {
+            let history = auth_seen::load(&path);
+            for sig in &mut signals {
+                if let Some(uid) = history.owner_at(sig.detected_at) {
+                    sig.uid = uid;
+                }
+            }
+        }
     }
     Ok(signals)
 }
@@ -865,6 +871,7 @@ pub fn run() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             use tauri::Manager;
 
@@ -958,23 +965,31 @@ pub fn run() {
                         state.handled.clear();
                         let signals = daemon::scan(&tasks, &projects, &mut state);
 
-                        let seen_auth = client_compat::auth_file()
-                            .and_then(|p| auth_seen::refresh(&p).ok().flatten());
+                        if let Some(auth) = client_compat::auth_file() {
+                            let _ = auth_seen::refresh(&auth);
+                        }
+                        let history = auth_seen::path()
+                            .ok()
+                            .map(|p| auth_seen::load(&p))
+                            .unwrap_or_default();
                         let accounts = client_compat::accounts_dir()
                             .ok()
                             .and_then(|d| account_store::load(&d).ok())
                             .unwrap_or_default();
+                        let profiles = client_compat::hub_dir()
+                            .ok()
+                            .map(|d| profile::ProfileStore::load(&d.join("profiles.json")))
+                            .unwrap_or_default();
                         let now = hub_core::now_secs();
-                        let current = seen_auth
-                            .as_ref()
+                        let current = history
+                            .current()
                             .map(|s| s.uid.clone())
                             .unwrap_or_default();
 
-                        for sig in signals {
-                            if let Some(s) = &seen_auth {
-                                if sig.uid == s.uid && sig.detected_at < s.since {
-                                    continue;
-                                }
+                        for mut sig in signals {
+                            // 按消息时间归属到当时在线的账号
+                            if let Some(uid) = history.owner_at(sig.detected_at) {
+                                sig.uid = uid;
                             }
                             // 只提醒刚发生的，避免启动时把历史全弹一遍
                             if now - sig.detected_at > 600 {
@@ -987,6 +1002,41 @@ pub fn run() {
                             let next_uid = daemon::pick_next(&accounts, &state, &current, now)
                                 .filter(|a| a.uid != sig.uid)
                                 .map(|a| a.uid);
+                            // 窗口不在前台时补一条系统通知，托盘状态下也能看到
+                            let focused = handle
+                                .get_webview_window("main")
+                                .and_then(|w| w.is_focused().ok())
+                                .unwrap_or(false);
+                            if !focused {
+                                use tauri_plugin_notification::NotificationExt;
+                                let label = profiles
+                                    .profiles
+                                    .get(&sig.uid)
+                                    .map(|p| p.phone.clone())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| sig.uid.chars().take(8).collect());
+                                let model = sig.model.clone().unwrap_or_else(|| {
+                                    if sig.kind == rate_limit::LimitKind::Account {
+                                        "账号额度".to_string()
+                                    } else {
+                                        "未知模型".to_string()
+                                    }
+                                });
+                                let body = match sig.reset_at {
+                                    Some(t) => format!(
+                                        "{label} · {model} · {} 恢复",
+                                        hub_core::format_ts(t)
+                                    ),
+                                    None => format!("{label} · {model} · 限流中"),
+                                };
+                                let _ = handle
+                                    .notification()
+                                    .builder()
+                                    .title("账号被限流")
+                                    .body(body)
+                                    .show();
+                            }
+
                             let _ = handle.emit(
                                 "limit-detected",
                                 LimitAlert {

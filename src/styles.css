@@ -1705,6 +1705,26 @@ input {
   display: inline-flex;
 }
 
+/* 禁用状态下按钮不接收鼠标事件，让 tooltip 能从外层容器触发 */
+.switch-wrap button:disabled {
+  pointer-events: none;
+}
+
+.hover-tip {
+  position: fixed;
+  z-index: 200;
+  max-width: 240px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.55;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+  pointer-events: none;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

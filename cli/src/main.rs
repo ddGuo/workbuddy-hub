@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use hub_core::account_store::{self, Account};
 use hub_core::auth_crypto::{self, AtRestKey};
+use hub_core::auth_seen;
 use hub_core::checkin;
 use hub_core::credit;
 use hub_core::model_probe;
@@ -695,7 +696,19 @@ fn cmd_watch(args: &[String]) -> Result<()> {
         let working = tasks.iter().filter(|t| t.status == "working").count();
         let mut state = daemon::RuntimeState::load(&runtime_path);
 
-        let signals = daemon::scan(&tasks, &projects, &mut state);
+        let mut signals = daemon::scan(&tasks, &projects, &mut state);
+        // 按消息时间归属到当时在线的账号
+        if let Some(auth) = client_compat::auth_file() {
+            let _ = auth_seen::refresh(&auth);
+        }
+        if let Ok(p) = auth_seen::path() {
+            let history = auth_seen::load(&p);
+            for sig in &mut signals {
+                if let Some(uid) = history.owner_at(sig.detected_at) {
+                    sig.uid = uid;
+                }
+            }
+        }
 
         for sig in &signals {
             let uid_short: String = sig.uid.chars().take(8).collect();
