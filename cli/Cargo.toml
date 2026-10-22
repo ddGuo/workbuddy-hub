@@ -1,0 +1,17 @@
+[package]
+name = "hub-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "workbuddy-hub 验证工具（M0 / M1 对拍用）"
+
+[[bin]]
+name = "hub"
+path = "src/main.rs"
+
+[dependencies]
+hub-core = { path = "../core" }
+anyhow = "1"
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"

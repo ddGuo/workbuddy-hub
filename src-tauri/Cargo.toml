@@ -1,0 +1,27 @@
+[package]
+name = "workbuddy-hub"
+version = "0.1.0"
+edition = "2021"
+description = "把多个 WorkBuddy 账号的任务收拢成一个列表"
+license = "MIT"
+
+[workspace]
+
+[lib]
+name = "workbuddy_hub_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hub-core = { path = "../core" }
+
+[profile.release]
+codegen-units = 16
+lto = false
+opt-level = 2
+strip = true

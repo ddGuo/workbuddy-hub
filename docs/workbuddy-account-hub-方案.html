@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WorkBuddy Account Hub · 技术方案</title>
+<style>
+  :root{
+    --bg:#0f0f0e; --panel:#181817; --panel-2:#1e1e1c; --line:#302f2c;
+    --ink:#e9e7e1; --ink-2:#a5a29a; --ink-3:#75726b;
+    --accent:#8fa3e8; --accent-dim:#2a3050;
+    --warn:#d99a63; --warn-dim:#3a2a1c;
+    --ok:#86b98a; --ok-dim:#1e2f21;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.75; font-weight:400;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:940px; margin:0 auto; padding:56px 32px 120px}
+
+  header{border-bottom:1px solid var(--line); padding-bottom:32px; margin-bottom:44px}
+  .eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); margin:0 0 12px}
+  h1{font-size:30px; line-height:1.35; font-weight:500; margin:0 0 14px; letter-spacing:-.01em}
+  .lede{font-size:15px; color:var(--ink-2); margin:0; max-width:720px}
+  .meta{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px}
+  .tag{font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:999px; color:var(--ink-2); background:var(--panel)}
+
+  section{margin:0 0 52px}
+  h2{
+    font-size:19px; font-weight:500; margin:0 0 18px; padding-left:14px;
+    border-left:3px solid var(--accent); line-height:1.4;
+  }
+  h2 .num{color:var(--ink-3); font-family:var(--mono); font-size:14px; margin-right:8px}
+  h3{font-size:15px; font-weight:500; margin:26px 0 10px; color:var(--ink)}
+  p{margin:0 0 14px; color:var(--ink-2)}
+  p strong,li strong{color:var(--ink); font-weight:500}
+  ul,ol{margin:0 0 16px; padding-left:22px; color:var(--ink-2)}
+  li{margin:6px 0}
+  code{font-family:var(--mono); font-size:12.5px; background:var(--panel-2); border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#cfcabb}
+
+  .callout{
+    background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:0 8px 8px 0; padding:16px 20px; margin:20px 0;
+  }
+  .callout p:last-child{margin:0}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.ok{border-left-color:var(--ok)}
+
+  table{width:100%; border-collapse:collapse; margin:18px 0 22px; font-size:13px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--ink-3); font-weight:500; font-size:12px; letter-spacing:.04em; border-bottom:1px solid #3d3c38}
+  td{color:var(--ink-2)}
+  td:first-child{color:var(--ink); font-weight:500}
+  tbody tr:hover{background:#141413}
+  .yes{color:var(--ok)} .no{color:var(--ink-3)} .part{color:var(--warn)}
+
+  .arch{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; margin:24px 0}
+  .layer{display:grid; grid-template-columns:96px 1fr; gap:14px; align-items:stretch; margin-bottom:10px}
+  .layer:last-child{margin-bottom:0}
+  .layer-label{
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    font-size:11.5px; color:var(--ink-3); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:8px; padding:8px 4px; line-height:1.4;
+  }
+  .layer-body{display:grid; gap:8px}
+  .g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+  .mod{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    padding:10px 12px; font-size:12.5px; line-height:1.5;
+  }
+  .mod b{display:block; color:var(--ink); font-weight:500; font-size:13px; margin-bottom:2px}
+  .mod span{color:var(--ink-3); font-size:11.5px}
+  .mod.new{border-color:#3b4468; background:var(--accent-dim)}
+  .mod.new b{color:#b9c6f5}
+  .mod.new span{color:#8d94b8}
+
+  .flow{margin:22px 0; counter-reset:step}
+  .step{position:relative; padding-left:44px; padding-bottom:20px; border-left:1px solid var(--line); margin-left:14px}
+  .step:last-child{border-left-color:transparent; padding-bottom:0}
+  .step::before{
+    counter-increment:step; content:counter(step);
+    position:absolute; left:-14px; top:0; width:27px; height:27px; border-radius:50%;
+    background:var(--panel-2); border:1px solid var(--line); color:var(--accent);
+    font-family:var(--mono); font-size:12px; display:flex; align-items:center; justify-content:center;
+  }
+  .step b{display:block; color:var(--ink); font-weight:500; margin-bottom:3px}
+  .step p{margin:0; font-size:13px}
+
+  pre{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:16px 18px; overflow-x:auto; margin:16px 0 22px;
+    font-family:var(--mono); font-size:12.5px; line-height:1.65; color:#bdb9ac;
+  }
+  pre .c{color:#6b6862}
+  pre .k{color:#9db0e8}
+  pre .s{color:#a9bf86}
+
+  .files{font-family:var(--mono); font-size:12.5px; line-height:1.85; color:#a9a69c;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px 20px; margin:16px 0}
+  .files .d{color:#8fa3e8}
+  .files .n{color:#6b6862}
+
+  footer{border-top:1px solid var(--line); padding-top:24px; color:var(--ink-3); font-size:12.5px}
+
+  @media (max-width:720px){
+    .wrap{padding:36px 20px 80px}
+    h1{font-size:24px}
+    .g4,.g3,.g2{grid-template-columns:1fr}
+    .layer{grid-template-columns:1fr}
+    .layer-label{justify-content:flex-start; padding:6px 10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">技术方案 · v0.1 草案</p>
+  <h1>WorkBuddy Account Hub<br>把「切号」从全局状态变更，降级为一次透明的凭据热替换</h1>
+  <p class="lede">
+    目标：合并 <code>dsh-workbuddy-connect</code> 与 <code>dsh-workbuddy-switcher</code>，
+    并补上两者都没覆盖的一层 —— <b>让正在进行的任务在换账号的过程中不中断、不丢失、可追溯</b>。
+  </p>
+  <div class="meta">
+    <span class="tag">基于本机实测数据与插件源码</span>
+    <span class="tag">DSH 0.2.1-rc.2+</span>
+    <span class="tag">改动量：中</span>
+    <span class="tag">2026-10-21</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span>先说结论</h2>
+  <p>这三件事值得先摆明，因为它们决定了方案的形状：</p>
+  <ol>
+    <li><strong>「任务被保持」这件事，其实已经成立了一半。</strong>DSH 的会话数据存在 <code>~/.dsh/sessions/&lt;workspace&gt;/session-*/session.v4.jsonl.zstd</code>，与账号凭据完全无关。换账号不会动这些文件，历史对话本来就在。真正会「断」的不是数据，而是<strong>正在跑的这一回合</strong>。</li>
+    <li><strong>合并有硬技术收益，不只是少装一个包。</strong>switcher 的 README 自己写了：两个包如果被装成两份实例，读到的是不同的 <code>process.env</code>，切换就失效。合成单包 = 单进程单解析器 = 切换必然生效，这个坑从根上消失。</li>
+    <li><strong>核心增量是一个新东西：会话账本。</strong>现有实现里账号是「全局当前选择」，一个进程只有一个。要真正做到「切号不影响别人的任务、断点任务能原地续跑」，账号必须下沉到 <strong>会话级 / 请求级</strong>解析。这是合并之后才有条件做的升级。</li>
+  </ol>
+  <div class="callout">
+    <p>一句话概括产品形态：<strong>一个账号池 + 一个会话账本 + 一个按请求解析凭据的调度内核</strong>。切号不再是「改一个全局开关」，而是「这个会话下一次请求该用谁的凭据」。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">02</span>两个插件现在各自管什么</h2>
+  <p>我把你机器上已安装的两份源码（<code>connect 0.7.8</code> / <code>switcher 0.2.4</code>）读了一遍，边界很清楚：</p>
+  <table>
+    <thead><tr><th>能力</th><th>connect</th><th>switcher</th><th>合并后</th></tr></thead>
+    <tbody>
+      <tr><td>模型接入与目录</td><td class="yes">✓ 国内版 / 国际版双分组</td><td class="no">—</td><td class="yes">✓ 继承</td></tr>
+      <tr><td>凭据解析</td><td class="yes">✓ config → env → 默认路径</td><td class="part">只写入 env</td><td class="yes">✓ 单点解析</td></tr>
+      <tr><td>账号池</td><td class="no">—</td><td class="yes">✓ <code>~/.dsh/workbuddy-accounts/</code></td><td class="yes">✓ 继承 + 加密</td></tr>
+      <tr><td>切换账号</td><td class="no">—</td><td class="yes">✓ 改 <code>WORKBUDDY_AUTH_FILE</code></td><td class="yes">✓ 下沉到会话级</td></tr>
+      <tr><td>额度耗尽续跑</td><td class="no">—</td><td class="part">只重试当前 step</td><td class="yes">✓ 回合级交接</td></tr>
+      <tr><td>签到 / 跨机同步</td><td class="no">—</td><td class="yes">✓</td><td class="yes">✓ 继承</td></tr>
+      <tr><td>会话与账号的绑定关系</td><td class="no">—</td><td class="no">—</td><td class="yes">✓ 新增</td></tr>
+      <tr><td>任务中途换号的上下文保障</td><td class="no">—</td><td class="no">—</td><td class="yes">✓ 新增</td></tr>
+    </tbody>
+  </table>
+
+  <h3>四个真实的断点</h3>
+  <p>这些是「切号会掉任务」的实际成因，不是理论问题：</p>
+  <ul>
+    <li><strong>断点 1 · 全局单例。</strong>凭据来自一个进程级环境变量，切号等于给所有会话换号。你没法「只把这个任务换到 B 账号，别的继续用 A」。</li>
+    <li><strong>断点 2 · 生效时机在请求边界。</strong>切换只对「下一次」请求生效。一个正在跑的多步任务（工具调用链）如果刚好在旧号额度耗尽时落在中间，整回合失败；即便被 <code>agent/request-error</code> 拦下重试，重试的是那一步，前面的上下文要重发。</li>
+    <li><strong>断点 3 · 没有回切能力。</strong>换号之后，没人记得「这个会话原本是 8bc5fd09 跑的」。想切回去复核、或想知道某段对话花了谁的额度，都查不到。</li>
+    <li><strong>断点 4 · 实例分裂。</strong>双包安装时如果出现两份 <code>connect</code> 实例，切换静默失效 —— 表现为「点了切换没反应」，最难排查的那类问题。</li>
+  </ul>
+</section>
+
+<section>
+  <h2><span class="num">03</span>产品定义与优先级</h2>
+  <table>
+    <thead><tr><th>级别</th><th>能力</th><th>验收方式</th></tr></thead>
+    <tbody>
+      <tr><td>P0</td><td>切号不打断正在进行的任务</td><td>对话进行中触发切换到新账号，当前回合最终正常完成，无报错、无重复工具调用</td></tr>
+      <tr><td>P0</td><td>账号池、切换、冷却、签到、跨机同步不退化</td><td>现有 switcher 的全部用例回归通过</td></tr>
+      <tr><td>P1</td><td>每个会话可追溯「用过哪些账号」</td><td>会话信息面板能看到交接记录（时间、从谁到谁、原因）</td></tr>
+      <tr><td>P1</td><td>会话可锁定账号，不参与自动轮换</td><td>锁定后即使其他账号更优也不切走；仅在该账号 429/402 时解除</td></tr>
+      <tr><td>P2</td><td>会话可导出 / 跨机续跑</td><td>导出包在另一台机器导入后，能继续同一会话</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="num">04</span>架构</h2>
+  <p>按职责切成四层。蓝色是新增模块，其余从现有两个插件迁移而来。</p>
+
+  <div class="arch">
+    <div class="layer">
+      <div class="layer-label">表示层</div>
+      <div class="layer-body g4">
+        <div class="mod"><b>账号卡片</b><span>余额 · 冷却 · 签到</span></div>
+        <div class="mod"><b>悬浮切换器</b><span>快速切换</span></div>
+        <div class="mod"><b>模型选择器</b><span>可见性 · 推理档位</span></div>
+        <div class="mod new"><b>会话面板</b><span>绑定账号 · 交接历史</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="layer-label">调度内核</div>
+      <div class="layer-body g4">
+        <div class="mod"><b>AccountStore</b><span>账号库 CRUD · 加解密</span></div>
+        <div class="mod new"><b>AuthResolver</b><span>按 (region, sessionId) 解析</span></div>
+        <div class="mod"><b>TurnGovernor</b><span>判冷却 · 选号 · 重试</span></div>
+        <div class="mod new"><b>SessionLedger</b><span>绑定表 · 交接事件</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="layer-label">通道层</div>
+      <div class="layer-body g3">
+        <div class="mod"><b>模型目录</b><span>上游拉取 + 内置兜底</span></div>
+        <div class="mod"><b>LLM 转发</b><span>鉴权 · 流式 · 超时</span></div>
+        <div class="mod"><b>余额与签到</b><span>积分查询</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="layer-label">存储层</div>
+      <div class="layer-body g3">
+        <div class="mod"><b>accounts/*.json</b><span>凭据（加密）</span></div>
+        <div class="mod"><b>state.json</b><span>选择 · 冷却 · 签到</span></div>
+        <div class="mod new"><b>bindings.json</b><span>会话 → 账号</span></div>
+      </div>
+    </div>
+  </div>
+
+  <p>合并只保留<strong>一个 LLM 转发入口</strong>。所有请求都从 <code>AuthResolver</code> 取凭据，<code>TurnGovernor</code> 所有判定也都在这一处，不存在两套逻辑打架的可能。</p>
+</section>
+
+<section>
+  <h2><span class="num">05</span>五个关键设计</h2>
+
+  <h3>D1 · 单包单实例</h3>
+  <p>从 <code>connect</code> 的 <code>peerDependency</code> 解耦出来，内部直接调用账号库，不再通过 <code>process.env</code> 做进程间传参。这一步同时消灭断点 4，以及「装了两个 connect 导致切换静默失效」的所有变体。</p>
+
+  <h3>D2 · 凭据解析下沉到会话级（核心）</h3>
+  <p>现有代码里，模型运行时拿的是一个全局 <code>current()</code> 配置快照。改造后签名变成按会话取：</p>
+  <pre><span class="c">// 现状：全局单例</span>
+createVariantRuntime(config, variant, () =&gt; current(), ...)
+
+<span class="c">// 改造：带会话上下文的解析</span>
+createVariantRuntime(config, variant, (ctx) =&gt; resolveAuth(ctx.sessionId, ctx.region), ...)</pre>
+  <p>解析优先级：<strong>会话显式绑定 → 全局当前选择 → 平台默认凭据</strong>。这样「切号」的语义从「给整个进程换号」变成「给未绑定的会话换默认号」，已绑定的会话不受影响。</p>
+
+  <h3>D3 · 回合级交接，而不是会话级重启</h3>
+  <p>额度耗尽时不做「结束当前任务、重开一个」，而是在 <code>agent/request-error</code> 这个 waterfall 里完成交接：判范围 → 选新号 → 标记冷却 → 重试同一步 → 记录一条 handover 事件。关键约束：</p>
+  <ul>
+    <li>交接必须发生在<strong>重试同一步</strong>的粒度上，工具调用结果不能重放，否则会产生重复副作用（重复写文件、重复下单这类）。</li>
+    <li>换号后如果目标模型上下文窗口更小，先裁剪再发送，并保证裁剪的是最老的中段而非系统提示与最近工具结果。</li>
+    <li>交接写进会话事件流，界面上明确显示「本回合第 3 步起由 697af213 接管」，不做成静默行为。</li>
+  </ul>
+
+  <h3>D4 · 会话账本</h3>
+  <p>每个会话一条绑定记录 + 一条交接日志。它解决断点 3，同时是 P2 跨机续跑的数据基础。</p>
+
+  <h3>D5 · 凭据静态加密</h3>
+  <p>现在 <code>~/.dsh/workbuddy-accounts/*.json</code> 是明文 <code>accessToken/refreshToken</code>，README 自己也警告过「凭证一旦离开本机无法远程吊销」。合并后账号库会集中承载全部账号，暴露面更大，建议顺手做掉：Windows 走 DPAPI、macOS 走 Keychain、Linux 走 libsecret，失败时降级为口令派生（scrypt）加密。属于额外收益，不阻塞主线。</p>
+</section>
+
+<section>
+  <h2><span class="num">06</span>数据模型</h2>
+  <pre><span class="c">// ~/.dsh/workbuddy-hub/accounts/&lt;uid&gt;.json   —— 兼容读取旧格式，写出时升级</span>
+{
+  <span class="k">"version"</span>: 2,
+  <span class="k">"account"</span>: { <span class="k">"uid"</span>: <span class="s">"697af213-…"</span>, <span class="k">"region"</span>: <span class="s">"cn"</span>, <span class="k">"alias"</span>: <span class="s">"工作号"</span> },
+  <span class="k">"auth"</span>: { <span class="c">/* 密文封装，不再明文落盘 */</span> },
+  <span class="k">"health"</span>: { <span class="k">"cooldowns"</span>: {}, <span class="k">"checkin"</span>: {} }
+}</pre>
+
+  <pre><span class="c">// ~/.dsh/workbuddy-hub/bindings.json   —— 新增：会话账本</span>
+{
+  <span class="k">"version"</span>: 1,
+  <span class="k">"sessions"</span>: {
+    <span class="k">"session-092d7be7-…"</span>: {
+      <span class="k">"accountFile"</span>: <span class="s">"697af213-….json"</span>,
+      <span class="k">"model"</span>: <span class="s">"deepseek-v4.1-flash"</span>,
+      <span class="k">"contextWindow"</span>: 200000,
+      <span class="k">"pinned"</span>: false,
+      <span class="k">"handovers"</span>: [
+        { <span class="k">"at"</span>: 1792468402525, <span class="k">"from"</span>: <span class="s">"8bc5fd09"</span>, <span class="k">"to"</span>: <span class="s">"697af213"</span>,
+          <span class="k">"reason"</span>: <span class="s">"hard_credit"</span>, <span class="k">"step"</span>: 3 }
+      ]
+    }
+  }
+}</pre>
+
+  <p><code>pinned</code> 是关键开关：置为 true 的会话不参与被动回收，只有真的 429/402 才会被交接走 —— 对应「我想让这个长任务固定用一个账号跑完」。</p>
+</section>
+
+<section>
+  <h2><span class="num">07</span>切号续跑：完整时序</h2>
+  <div class="flow">
+    <div class="step"><b>回合进行中</b><p>会话 <code>S</code> 正在跑第 3 步，用的是账号 <code>A</code> 的凭据，此时 <code>A</code> 积分耗尽返回 402。</p></div>
+    <div class="step"><b>拦截</b><p><code>TurnGovernor</code> 在最外层 waterfall 拦下错误，读取 <code>failure</code> 里的 provider 与消息体，判定为账号级耗尽。</p></div>
+    <div class="step"><b>标冷却</b><p>给 <code>A</code> 打上账号级冷却（有重置时间则精确到那一刻，否则按退避策略），落盘。</p></div>
+    <div class="step"><b>选号</b><p>从健康账号里挑一个：优先已绑定且未冷却、其次上下文窗口满足当前会话、最后按刷新令牌寿命排序。</p></div>
+    <div class="step"><b>写账本</b><p>在 <code>bindings.json</code> 里追加 handover 事件，更新 <code>accountFile</code>。</p></div>
+    <div class="step"><b>重试同一步</b><p>返回 <code>{kind:'retry'}</code>，让 agent 重跑第 3 步 —— 之前的工具调用结果原样保留，不重放。</p></div>
+    <div class="step"><b>落定</b><p>回合正常完成。界面显示交接标记，会话之后继续用 <code>B</code>，除非你手动切回。</p></div>
+  </div>
+  <div class="callout warn">
+    <p><strong>这里有个必须承认的边界：</strong>如果失败发生在一次工具调用「执行中」而不是「请求边界」，重试无法避免副作用重放。方案的做法是把交接点限制在 LLM 请求边界，并在工具调用前后各记一个 checkpoint；一旦检测到非边界失败，宁可让任务停下并明确告知，也不静默重放。这比假装无损要诚实。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">08</span>工程结构</h2>
+  <div class="files">
+<span class="d">workbuddy-hub/</span>
+├─ package.json            <span class="n"># 单包，无 workbuddy-connect 依赖</span>
+├─ cordis.patch.yml
+<span class="d">├─ src/host/</span>
+│  ├─ account-store.ts     <span class="n"># 账号库 + 加解密 + 旧格式迁移</span>
+│  ├─ auth-resolver.ts     <span class="n"># ★ 会话级凭据解析</span>
+│  ├─ turn-governor.ts     <span class="n"># 冷却判定 / 选号 / retry</span>
+│  ├─ session-ledger.ts    <span class="n"># ★ 绑定表 + 交接事件</span>
+│  ├─ catalog.ts           <span class="n"># 模型目录与可见性</span>
+│  ├─ proxy.ts             <span class="n"># LLM 转发</span>
+│  └─ checkin.ts           <span class="n"># 签到（从 switcher 迁移）</span>
+<span class="d">├─ src/client/</span>
+│  ├─ account-panel.tsx    <span class="n"># 账号卡片</span>
+│  ├─ floating-switch.tsx  <span class="n"># 悬浮切换器</span>
+│  └─ session-badge.tsx    <span class="n"># ★ 会话交接标记</span>
+<span class="d">└─ test/</span>
+   ├─ handover.test.ts     <span class="n"># 交接不重放工具调用</span>
+   ├─ resolver.test.ts     <span class="n"># 绑定优先级</span>
+   └─ migrate.test.ts      <span class="n"># 旧账号库无损迁移</span>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">09</span>风险与对策</h2>
+  <table>
+    <thead><tr><th>风险</th><th>影响</th><th>对策</th></tr></thead>
+    <tbody>
+      <tr><td>明文凭据集中</td><td>账号库泄露 = 所有账号失效，且无法远程吊销</td><td>D5 静态加密；导出文件默认带口令；首次运行就提示不要在共享目录存放</td></tr>
+      <tr><td>签到是逆向的私有接口</td><td>上游改版即失效，属预期内损耗</td><td>签到独立降级，失败不阻塞切换与对话；界面上标「暂不可用」而非报错</td></tr>
+      <tr><td>多账号高频轮换</td><td>可能触发上游风控，反噬正常使用</td><td>默认限速：同一模型并发不超过 N；轮换加最小间隔；连续失败回退到"停手"</td></tr>
+      <tr><td>非边界失败无法无缝续跑</td><td>个别任务仍可能中断</td><td>明确失败语义 + checkpoint，不静默重放副作用</td></tr>
+      <tr><td>DSH 会话格式随版本变化</td><td>跨机导出包可能失效</td><td>只通过 DSH 自身 API 读写会话，不直接解 <code>.zstd</code> 二进制；导出包带版本号并做兼容校验</td></tr>
+      <tr><td>账号共享使用违反服务条款</td><td>账号被处置</td><td>定位为「个人自有多个账号的管理工具」，不做账号分发、不做代登录；文档里写清使用边界</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p>最后一条要单独说：这套东西的合理形态是<strong>管理你自己名下的多个账号</strong>。如果做成对外提供账号池的服务，那性质就完全变了，不在本方案范围内。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">10</span>里程碑</h2>
+  <table>
+    <thead><tr><th>阶段</th><th>交付</th><th>验证</th></tr></thead>
+    <tbody>
+      <tr><td>M0 合并骨架</td><td>单包、单解析器、能读旧账号库并原样工作</td><td>卸载旧两包后功能等价，切换立即生效（不再等 30 秒轮询）</td></tr>
+      <tr><td>M1 会话级解析</td><td>AuthResolver 带 sessionId、bindings.json 落盘</td><td>两个会话绑不同账号，互不干扰</td></tr>
+      <tr><td>M2 交接与可视化</td><td>TurnGovernor 完整规则、会话面板交接历史、pinned</td><td>任务跑到一半耗尽额度，自动续跑且界面有标记</td></tr>
+      <tr><td>M3 加固</td><td>凭据加密、跨机导出包、限速与风控退避</td><td>导出导入往返一致；连续轮换不触发限流</td></tr>
+    </tbody>
+  </table>
+  <p>建议先做 M0+M1，这两步就能覆盖你最初那句「切号同时保持任务」的主要体感；M2 决定它是不是真的好用，M3 决定能不能长期用。</p>
+</section>
+
+<section>
+  <h2><span class="num">11</span>需要你确认的四件事</h2>
+  <ol>
+    <li><strong>「保持任务」的范围。</strong>是指 DSH 里的会话（本方案主线），还是也要覆盖 WorkBuddy 客户端里的任务列表？后者要动客户端本地数据，风险和工程量都不是一个量级，我建议单独立项。</li>
+    <li><strong>要不要跨机器续跑。</strong>只同步账号库很简单；连会话一起带走才叫「换台机器接着干」，但会牵扯会话格式兼容。</li>
+    <li><strong>账号库加密能否接受一个口令。</strong>加密后每次启动要输一次（可记住 N 天），换来的是凭据不再明文躺在磁盘上。</li>
+    <li><strong>是改造现有插件，还是起一个全新包。</strong>我倾向全新包 <code>workbuddy-hub</code>，把旧的账号库目录做成兼容读取，让你现在这 6 个账号无缝迁过来，而不是在原仓库上打补丁。</li>
+  </ol>
+</section>
+
+<footer>
+  方案基于本机实测：<code>~/.dsh</code> 已安装 connect 0.7.8 与 switcher 0.2.4，账号库存有 6 个账号，
+  DSH 会话 19 组 / 单会话记录为 <code>session.v4.jsonl.zstd</code>。文中接口结论均来自对已安装源码的直接阅读。
+</footer>
+
+</div>
+</body>
+</html>

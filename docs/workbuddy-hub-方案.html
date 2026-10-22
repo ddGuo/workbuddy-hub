@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>workbuddy-hub · 技术方案 v0.2</title>
+<style>
+  :root{
+    --bg:#0f0f0e; --panel:#181817; --panel-2:#1e1e1c; --line:#302f2c;
+    --ink:#e9e7e1; --ink-2:#a5a29a; --ink-3:#75726b;
+    --accent:#8fa3e8; --accent-dim:#242a45;
+    --warn:#d99a63;
+    --ok:#86b98a;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.75; font-weight:400;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:56px 32px 120px}
+
+  header{border-bottom:1px solid var(--line); padding-bottom:32px; margin-bottom:44px}
+  .eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); margin:0 0 12px}
+  h1{font-size:30px; line-height:1.35; font-weight:500; margin:0 0 14px; letter-spacing:-.01em}
+  .lede{font-size:15px; color:var(--ink-2); margin:0; max-width:760px}
+  .meta{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px}
+  .tag{font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:999px; color:var(--ink-2); background:var(--panel)}
+  .tag.on{border-color:#3b4468; background:var(--accent-dim); color:#b9c6f5}
+
+  section{margin:0 0 54px}
+  h2{
+    font-size:19px; font-weight:500; margin:0 0 18px; padding-left:14px;
+    border-left:3px solid var(--accent); line-height:1.4;
+  }
+  h2 .num{color:var(--ink-3); font-family:var(--mono); font-size:14px; margin-right:8px}
+  h3{font-size:15px; font-weight:500; margin:28px 0 10px; color:var(--ink)}
+  p{margin:0 0 14px; color:var(--ink-2)}
+  p strong,li strong{color:var(--ink); font-weight:500}
+  ul,ol{margin:0 0 16px; padding-left:22px; color:var(--ink-2)}
+  li{margin:6px 0}
+  code{font-family:var(--mono); font-size:12.5px; background:var(--panel-2); border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#cfcabb}
+
+  .callout{
+    background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:0 8px 8px 0; padding:16px 20px; margin:20px 0;
+  }
+  .callout p:last-child{margin:0}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.ok{border-left-color:var(--ok)}
+
+  table{width:100%; border-collapse:collapse; margin:18px 0 22px; font-size:13px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--ink-3); font-weight:500; font-size:12px; letter-spacing:.04em; border-bottom:1px solid #3d3c38}
+  td{color:var(--ink-2)}
+  td:first-child{color:var(--ink); font-weight:500}
+  tbody tr:hover{background:#141413}
+  .yes{color:var(--ok)} .no{color:var(--ink-3)} .part{color:var(--warn)}
+  .pick{background:var(--accent-dim) !important}
+  .pick td:first-child{color:#b9c6f5}
+
+  .arch{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; margin:24px 0}
+  .layer{display:grid; grid-template-columns:104px 1fr; gap:14px; align-items:stretch; margin-bottom:10px}
+  .layer:last-child{margin-bottom:0}
+  .layer-label{
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    font-size:11.5px; color:var(--ink-3); background:var(--panel-2);
+    border:1px solid var(--line); border-radius:8px; padding:8px 4px; line-height:1.4;
+  }
+  .layer-body{display:grid; gap:8px}
+  .g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+  .mod{
+    background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+    padding:10px 12px; font-size:12.5px; line-height:1.5;
+  }
+  .mod b{display:block; color:var(--ink); font-weight:500; font-size:13px; margin-bottom:2px}
+  .mod span{color:var(--ink-3); font-size:11.5px}
+  .mod.new{border-color:#3b4468; background:var(--accent-dim)}
+  .mod.new b{color:#b9c6f5}
+  .mod.new span{color:#8d94b8}
+
+  .flow{margin:22px 0; counter-reset:step}
+  .step{position:relative; padding-left:44px; padding-bottom:18px; border-left:1px solid var(--line); margin-left:14px}
+  .step:last-child{border-left-color:transparent; padding-bottom:0}
+  .step::before{
+    counter-increment:step; content:counter(step);
+    position:absolute; left:-14px; top:0; width:27px; height:27px; border-radius:50%;
+    background:var(--panel-2); border:1px solid var(--line); color:var(--accent);
+    font-family:var(--mono); font-size:12px; display:flex; align-items:center; justify-content:center;
+  }
+  .step b{display:block; color:var(--ink); font-weight:500; margin-bottom:3px}
+  .step p{margin:0; font-size:13px}
+
+  pre{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:16px 18px; overflow-x:auto; margin:16px 0 22px;
+    font-family:var(--mono); font-size:12.5px; line-height:1.65; color:#bdb9ac;
+  }
+  pre .c{color:#6b6862}
+  pre .k{color:#9db0e8}
+  pre .s{color:#a9bf86}
+
+  .files{font-family:var(--mono); font-size:12.5px; line-height:1.85; color:#a9a69c;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px 20px; margin:16px 0}
+  .files .d{color:#8fa3e8}
+  .files .n{color:#6b6862}
+
+  footer{border-top:1px solid var(--line); padding-top:24px; color:var(--ink-3); font-size:12.5px}
+
+  @media (max-width:760px){
+    .wrap{padding:36px 20px 80px}
+    h1{font-size:24px}
+    .g4,.g3,.g2{grid-template-columns:1fr}
+    .layer{grid-template-columns:1fr}
+    .layer-label{justify-content:flex-start; padding:6px 10px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">技术方案 · v0.2 · 方向已定稿</p>
+  <h1>workbuddy-hub<br>把散在各个账号里的任务，收拢成一个列表</h1>
+  <p class="lede">
+    一个独立的 Windows 桌面应用：只读聚合 WorkBuddy 客户端所有账号的任务，
+    需要时一键切换客户端登录的账号。<b>不修改客户端的任何数据文件</b>，因此不随客户端版本升级而失效。
+  </p>
+  <div class="meta">
+    <span class="tag on">需求已确认 4 项</span>
+    <span class="tag">Tauri 2 + Rust + React</span>
+    <span class="tag">零侵入</span>
+    <span class="tag">2026-10-21</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span>需求定稿</h2>
+  <table>
+    <thead><tr><th>问题</th><th>你的决定</th><th>对方案的影响</th></tr></thead>
+    <tbody>
+      <tr><td>「保持任务」指什么</td><td>WorkBuddy 客户端里的任务列表，要看到所有账号的合集</td><td>核心功能 = 跨账号任务聚合视图，不是 DSH 会话续跑</td></tr>
+      <tr><td>跨机器续跑</td><td>不要</td><td>去掉会话导出包，工作量减少约 30%</td></tr>
+      <tr><td>账号库加密</td><td>不需要，保持原始明文</td><td>直接复用 DSH 现有账号库格式，零迁移成本</td></tr>
+      <tr><td>形态</td><td>新包 <code>workbuddy-hub</code></td><td>全新独立应用，不改造现有两个插件</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout ok">
+    <p><strong>一个意外的好消息：</strong>你机器上的 DSH 账号库里已经存了 6 个账号的可用凭据（<code>~/.dsh/workbuddy-accounts/*.json</code>，明文）。这意味着 hub 首次启动就能直接接管这 6 个账号，<strong>不需要你逐个重新登录客户端</strong>。这是整个方案能立刻跑起来的前提。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">02</span>客户端数据实测</h2>
+  <p>以下全部来自对你这台机器的只读探测，不是推测。方案的可信度建立在这些事实上。</p>
+
+  <h3>任务数据分三层</h3>
+  <table>
+    <thead><tr><th>层</th><th>位置</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td>索引</td><td><code>~/.workbuddy/workbuddy.db</code><br><span style="color:var(--ink-3);font-size:12px">SQLite · 216 KB · WAL 模式</span></td><td><code>sessions</code> 表：id / cwd / <b>user_id</b> / title / status / 时间戳</td></tr>
+      <tr><td>正文</td><td><code>~/.workbuddy/projects/&lt;编码后的cwd&gt;/&lt;session-id&gt;.jsonl</code></td><td>逐条消息记录，一个会话一个文件</td></tr>
+      <tr><td>附件</td><td><code>~/.workbuddy/blobs/</code></td><td>72 个分片目录，按哈希寻址</td></tr>
+    </tbody>
+  </table>
+
+  <h3>当前账号分布（实测）</h3>
+  <table>
+    <thead><tr><th>账号 uid 前缀</th><th>未删除任务数</th><th>最近活动</th></tr></thead>
+    <tbody>
+      <tr><td>8bc5fd09</td><td>9</td><td>2026-10-19</td></tr>
+      <tr><td>db0427fd <span style="color:var(--ok);font-size:12px">当前登录</span></td><td>1</td><td>2026-10-21</td></tr>
+      <tr><td>697af213</td><td>1</td><td>2026-10-18</td></tr>
+      <tr><td>4dba68a4</td><td>1</td><td>2026-10-18</td></tr>
+      <tr><td colspan="3" style="color:var(--ink-3)">合计 12 个任务，分散在 4 个账号里 —— 这就是「切换账号后任务不见了」的全部真相：数据都在，客户端只是按 <code>user_id</code> 过滤。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>凭据与加密</h3>
+  <table>
+    <thead><tr><th>项</th><th>实测结论</th></tr></thead>
+    <tbody>
+      <tr><td>凭据文件</td><td><code>%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info</code>（明文 JSON，7 KB）</td></tr>
+      <tr><td>结构</td><td><code>auth</code>（token 组）+ <code>account</code>（uid/nickname）+ <code>accounts</code> / <code>allAccounts</code>（只有当前账号 1 条）</td></tr>
+      <tr><td>加密字段</td><td><code>accessToken</code> / <code>refreshToken</code> / <code>nickname</code> / <code>phoneNumber</code> 均为 <code>{"$wbEncrypted":1, "envelope":"..."}</code></td></tr>
+      <tr><td>算法</td><td>AES-256-GCM，密钥 = <code>SHA256(atRestSecretKey)</code>，带自定义 AAD</td></tr>
+      <tr><td>密钥来源</td><td>运行 <code>WorkBuddy.exe -e "process._linkedBinding('electron_browser_workbuddy_storage').loggerGet()"</code>（<code>ELECTRON_RUN_AS_NODE=1</code>）</td></tr>
+      <tr><td>主密钥槽</td><td><code>~/.workbuddy/keyblob</code> → <code>{version, keyId, slots:[{type:"static-v1", wrapped}]}</code></td></tr>
+      <tr><td>多账号备份</td><td class="part">客户端<b>只保留当前账号</b>，切走即丢失 → 必须由 hub 自己存档</td></tr>
+      <tr><td>完整性校验</td><td class="yes">无。旁边的 <code>observation.json</code> 只是活跃会话标记（<code>facts: []</code>），改写 auth 文件不会触发校验失败</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <p><strong>两个必须记住的坑：</strong>① 客户端安装在 <code>D:\WorkBuddy\</code>，不是默认路径，探测逻辑要覆盖 Program Files / LOCALAPPDATA / 注册表三条来源。② 该目录下有 <code>app\lockfile</code>，说明客户端有单实例锁 —— 切号必须走「退出 → 改凭据 → 重启」，不能指望热切换。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">03</span>产品形态与边界</h2>
+  <p>一句话：<strong>hub 是客户端旁边的一块平级视图，不是客户端的改造版。</strong></p>
+
+  <table>
+    <thead><tr><th></th><th>hub 做什么</th><th>hub 不做什么</th></tr></thead>
+    <tbody>
+      <tr><td>数据</td><td>只读 <code>workbuddy.db</code> 与 jsonl 正文</td><td class="no">不改 sessions.user_id、不改客户端 db 结构</td></tr>
+      <tr><td>任务</td><td>跨账号聚合展示、按项目/账号/状态筛选、搜索</td><td class="no">不嵌入客户端、不替换客户端任务列表</td></tr>
+      <tr><td>账号</td><td>存档、切换、显示归属与余额</td><td class="no">不做账号分发、不做代登录</td></tr>
+      <tr><td>打开任务</td><td>切到归属账号 → 唤起客户端 → 定位到该任务</td><td class="no">不自己渲染对话正文（v1 不做）</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <p>为什么坚持零侵入？因为 <code>sessions.user_id</code> 是客户端所有查询的过滤键。把它改成当前账号，任务确实「出现在原生列表里」了，但归属信息被破坏 —— 切回原账号时那些任务又不见了，而且无法还原谁是真正的属主。<strong>收益是临时的，代价是不可逆的。</strong>聚合视图能给你同样的可见性，且随时可撤销。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">04</span>架构</h2>
+  <div class="arch">
+    <div class="layer">
+      <div class="layer-label">界面层<br>React</div>
+      <div class="layer-body g4">
+        <div class="mod new"><b>任务总览</b><span>跨账号列表 · 分组 · 搜索</span></div>
+        <div class="mod new"><b>账号面板</b><span>归属 · 余额 · 当前态</span></div>
+        <div class="mod"><b>切换器</b><span>托盘常驻 · 快捷切换</span></div>
+        <div class="mod"><b>任务详情</b><span>元信息 · 产物入口</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="layer-label">核心层<br>Rust</div>
+      <div class="layer-body g4">
+        <div class="mod new"><b>TaskIndex</b><span>只读 DB 跨 user_id 聚合</span></div>
+        <div class="mod new"><b>AccountStore</b><span>账号库 · DSH 格式兼容</span></div>
+        <div class="mod new"><b>AuthCrypto</b><span>AES-GCM 解密 / 封装</span></div>
+        <div class="mod new"><b>SwitchEngine</b><span>退出 · 写凭据 · 重启</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="layer-label">系统层</div>
+      <div class="layer-body g3">
+        <div class="mod"><b>进程控制</b><span>探测 · 优雅退出 · 启动</span></div>
+        <div class="mod"><b>密钥获取</b><span>spawn 客户端取 atRestSecretKey</span></div>
+        <div class="mod"><b>文件监听</b><span>db-wal 变化 → 增量刷新</span></div>
+      </div>
+    </div>
+  </div>
+  <p>核心层四个模块都是纯 Rust，没有 Node 依赖。界面层通过 Tauri 的 IPC 拿数据，不直接碰文件系统。</p>
+</section>
+
+<section>
+  <h2><span class="num">05</span>三个核心机制</h2>
+
+  <h3>M1 · 跨账号任务聚合</h3>
+  <p>一条 SQL 就能拿到全部任务，关键是<strong>只读打开、不阻塞客户端写入</strong>：</p>
+  <pre><span class="k">SELECT</span> id, user_id, cwd, title, status, updated_at
+<span class="k">FROM</span> sessions
+<span class="k">WHERE</span> deleted_at <span class="k">IS NULL</span>
+<span class="k">ORDER BY</span> updated_at <span class="k">DESC</span>;</pre>
+  <p>三个要点：</p>
+  <ul>
+    <li>用 <code>file:...?mode=ro</code> 打开，配合 <code>immutable=0</code> 让 SQLite 正确读 WAL 里尚未 checkpoint 的数据（客户端刚写完的任务不会漏）。</li>
+    <li>只查索引不读正文。正文 jsonl 平均几十 KB 到几百 KB，全部读入会让首次加载变慢；改成<strong>按需读取 + 只取末尾几条</strong>做摘要。</li>
+    <li>监听 <code>workbuddy.db-wal</code> 的修改时间，变化后做一次差量刷新，避免轮询全表。</li>
+  </ul>
+
+  <h3>M2 · 凭据解密与封装</h3>
+  <p>这是整个方案技术含量最高的部分，但已经有可验证的参考实现（switcher 的 <code>importCurrent()</code>）。核心是两段：</p>
+  <pre><span class="c">// 1. 取主密钥：让客户端自己吐出 atRestSecretKey</span>
+WorkBuddy.exe -e "process.stdout.write(String(
+  process._linkedBinding('electron_browser_workbuddy_storage').loggerGet()))"
+<span class="c">// 环境变量 ELECTRON_RUN_AS_NODE=1，超时 30s</span>
+
+<span class="c">// 2. 解密：key = SHA256(atRestSecretKey)，AES-256-GCM</span>
+<span class="c">// AAD 必须按字节精确拼装，顺序错一个字节就解不开：</span>
+"WB-AAD\0" ‖ 0x01 ‖ LP("WBEV1") ‖ LP("sym-v1") ‖ suite(u32be)
+          ‖ LP(keyId) ‖ 0x02 ‖ 0x00 ‖ 0x00
+<span class="c">// LP(x) = u32be(len) ‖ bytes</span></pre>
+  <p>加密方向写回时同理，只是把 <code>decipher</code> 换成 <code>cipher</code>，用新的随机 nonce。Rust 的 <code>aes-gcm</code> crate 原生支持 AAD，比 JS 里拼 Buffer 更不容易出错。</p>
+
+  <h3>M3 · 切号引擎</h3>
+  <p>切号不是改一个变量，是一次有状态的迁移，必须按顺序做完：</p>
+  <div class="flow">
+    <div class="step"><b>前置检查</b><p>目标账号凭据存在且 refreshToken 未过期；客户端当前没有 <code>status='working'</code> 的任务（有则弹窗确认，不静默杀进程）。</p></div>
+    <div class="step"><b>刷新令牌</b><p>refreshToken 临近过期时先换新，并把新令牌回写账号库 —— 上游会轮换 refreshToken，不回写下次就失效了。</p></div>
+    <div class="step"><b>备份</b><p>把当前 <code>workbuddy-desktop.info</code> 复制成带时间戳的备份，失败可一键回滚。</p></div>
+    <div class="step"><b>优雅退出</b><p>先发关闭信号，等主进程真正退出（轮询 pid），超时才强制结束。直接 kill 有 WAL 损坏风险。</p></div>
+    <div class="step"><b>写入凭据</b><p>用 <code>atRestSecretKey</code> 加密目标 token → 组装 envelope → 原子写入（临时文件 + rename），保留 <code>accounts</code> / <code>allAccounts</code> 结构。</p></div>
+    <div class="step"><b>重启并验证</b><p>启动客户端，等待 auth 文件被重新写入（说明登录成功），失败则自动回滚备份并报错。</p></div>
+  </div>
+  <div class="callout warn">
+    <p><strong>这一步是整个产品风险最集中的地方。</strong>它依赖客户端的内部格式，而格式可能随版本变化。对策：把「AES 参数 + auth 文件结构」抽成一个独立的适配层 <code>client-compat</code>，带版本探测；一旦解密或写入校验失败，<strong>立刻停止并回滚，绝不在不确定的状态下重启客户端</strong>。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">06</span>技术选型：客户端用什么写</h2>
+  <p>直接给结论：<strong>Tauri 2 + Rust（后端）+ React + TypeScript（前端）</strong>。</p>
+
+  <table>
+    <thead><tr><th>维度</th><th class="pick">Tauri 2 / Rust</th><th>Electron / TS</th><th>.NET 8 / WinUI</th></tr></thead>
+    <tbody>
+      <tr><td>安装包体积</td><td class="pick">8–12 MB</td><td class="no">90–150 MB</td><td>30–60 MB</td></tr>
+      <tr><td>常驻内存</td><td class="pick">40–60 MB</td><td class="no">180–250 MB</td><td>60–90 MB</td></tr>
+      <tr><td>复用现有插件代码</td><td class="part">需移植 ~250 行</td><td class="yes">可直接搬</td><td class="part">需移植</td></tr>
+      <tr><td>AES-GCM + 自定义 AAD</td><td class="yes">aes-gcm crate，原生 AAD</td><td class="yes">Node crypto</td><td class="yes">AesGcm 类</td></tr>
+      <tr><td>SQLite WAL 只读</td><td class="yes">rusqlite bundled</td><td class="yes">better-sqlite3</td><td class="yes">Microsoft.Data.Sqlite</td></tr>
+      <tr><td>跨平台（mac 版）</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">仅 Windows</td></tr>
+      <tr><td>UI 开发体验</td><td class="yes">React 全量可用</td><td class="yes">React 全量可用</td><td class="part">XAML</td></tr>
+      <tr><td>开发速度</td><td class="part">中</td><td class="yes">快</td><td>中</td></tr>
+    </tbody>
+  </table>
+
+  <h3>为什么是 Rust 而不是 Electron</h3>
+  <ol>
+    <li><strong>它要常驻。</strong>hub 的形态是托盘应用 + 开机自启 + 后台监听 db 变化。Electron 常驻 200 MB 内存，对一个「看任务列表」的工具来说不合理；Tauri 用系统 WebView2，常驻 50 MB 左右。</li>
+    <li><strong>核心逻辑全是系统调用，不是 DOM。</strong>取密钥要 spawn 子进程、解密要精确到字节的 AAD 拼装、读 SQLite 要处理 WAL、切号要管进程生命周期 —— 这些在 Rust 里比在 Node 里更直接，且不需要为了一个 CLI 逻辑背一个 Chromium。</li>
+    <li><strong>解密代码越少依赖越好。</strong>这套逻辑接触的是别人的登录凭据，跑在一个只有必要依赖的二进制里，比跑在带完整 Node 生态和 npm 依赖树的运行时里更让人放心。</li>
+    <li><strong>mac 版留了门。</strong>WorkBuddy 有 macOS 客户端，凭据路径与加密方式大概率不同但结构类似。Tauri 的 <code>#[cfg(target_os)]</code> 分支成本远低于重做一套 Electron 打包。</li>
+  </ol>
+
+  <h3>代价，以及怎么控制</h3>
+  <ul>
+    <li><strong>加解密逻辑要从 TS 移植到 Rust</strong>，约 250 行。这是唯一有实际出错风险的地方。对策：先写一个<strong>对拍测试</strong> —— 拿同一份 <code>workbuddy-desktop.info</code>，用已跑通的 TypeScript 实现和 Rust 实现各解一次，明文必须逐字节相同。这一步通了，后面都是常规开发。</li>
+    <li><strong>Rust 开发速度慢于 TS</strong>。对策：把 UI 全部放在 React 侧，Rust 只做 5 个命令（<code>list_tasks</code> / <code>list_accounts</code> / <code>switch_account</code> / <code>open_task</code> / <code>refresh</code>），接口面收窄。</li>
+  </ul>
+
+  <div class="callout">
+    <p><strong>什么情况下应该改用 Electron：</strong>如果你希望两周内就看到能跑的原型，且不介意安装包 120 MB。前面提到的移植风险和开发速度是真实成本，Electron 在这两点上确实更省。前端代码在两种方案里<strong>完全通用</strong>，所以先做 React 界面、后端延后定型，也是一条可行路径。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">07</span>数据模型</h2>
+  <p>账号库直接复用 DSH 的目录与格式，<strong>hub 和现有两个插件共享同一份账号库</strong>，互不干扰：</p>
+  <pre><span class="c">// ~/.dsh/workbuddy-accounts/&lt;uid&gt;.json   —— 格式不变，hub 只读 + 回写令牌</span>
+{ <span class="k">"auth"</span>: { <span class="k">"accessToken"</span>: <span class="s">"…"</span>, <span class="k">"refreshToken"</span>: <span class="s">"…"</span>,
+            <span class="k">"expiresAt"</span>: 1794728770, <span class="k">"domain"</span>: <span class="s">"www.workbuddy.cn"</span> },
+  <span class="k">"account"</span>: { <span class="k">"uid"</span>: <span class="s">"697af213-…"</span> } }</pre>
+
+  <p>hub 自己的状态文件只存 UI 与偏好，不重复存凭据：</p>
+  <pre><span class="c">// ~/.workbuddy-hub/state.json</span>
+{
+  <span class="k">"version"</span>: 1,
+  <span class="k">"aliases"</span>: { <span class="s">"697af213-…"</span>: <span class="s">"工作号"</span> },   <span class="c">// 手动备注</span>
+  <span class="k">"lastSwitch"</span>: { <span class="k">"from"</span>: <span class="s">"db0427fd"</span>, <span class="k">"to"</span>: <span class="s">"8bc5fd09"</span>, <span class="k">"at"</span>: 1792570273376 },
+  <span class="k">"ui"</span>: { <span class="k">"groupBy"</span>: <span class="s">"account"</span>, <span class="k">"hideEmptyAccounts"</span>: true }
+}</pre>
+
+  <p>切号前的凭据备份放 <code>~/.workbuddy-hub/backups/</code>，每次一个带时间戳的文件，保留最近 10 份，是回滚的唯一凭据。</p>
+</section>
+
+<section>
+  <h2><span class="num">08</span>工程结构与里程碑</h2>
+  <div class="files">
+<span class="d">workbuddy-hub/</span>
+├─ src-tauri/
+│  ├─ <span class="d">src/</span>
+│  │  ├─ main.rs            <span class="n"># 托盘 · 单实例 · 窗口</span>
+│  │  ├─ commands.rs        <span class="n"># 5 个 IPC 命令</span>
+│  │  ├─ <span class="d">task_index.rs</span>      <span class="n"># 只读聚合 + 差量刷新</span>
+│  │  ├─ <span class="d">client_compat.rs</span>    <span class="n"># ★ 路径探测 · 版本适配</span>
+│  │  ├─ <span class="d">auth_crypto.rs</span>      <span class="n"># ★ AES-GCM + AAD</span>
+│  │  ├─ <span class="d">account_store.rs</span>    <span class="n"># 账号库读写</span>
+│  │  └─ <span class="d">switch_engine.rs</span>   <span class="n"># ★ 退出 · 写入 · 重启 · 回滚</span>
+│  └─ Cargo.toml
+├─ <span class="d">src/</span>                      <span class="n"># React + TS</span>
+│  ├─ TaskBoard.tsx         <span class="n"># 任务总览</span>
+│  ├─ AccountRail.tsx       <span class="n"># 账号栏</span>
+│  └─ SwitchDialog.tsx      <span class="n"># 切换确认</span>
+└─ <span class="d">tests/</span>
+   ├─ crypto_parity.rs      <span class="n"># ★ 与 TS 实现对拍</span>
+   └─ switch_rollback.rs    <span class="n"># 回滚测试</span>
+  </div>
+
+  <table>
+    <thead><tr><th>阶段</th><th>交付</th><th>验证标准</th></tr></thead>
+    <tbody>
+      <tr><td>M0 数据打通</td><td>只读聚合 4 个账号 12 个任务，界面能列出来</td><td>与 <code>SELECT count(*)</code> 结果一致，不锁库、不影响客户端运行</td></tr>
+      <tr><td>M1 解密对拍</td><td>Rust 解出与 TS 逐字节一致的明文</td><td>6 个账号全部解密成功，加密回写后客户端能正常登录</td></tr>
+      <tr><td>M2 切号闭环</td><td>界面点切换 → 客户端重启 → 落到目标账号</td><td>切过去再切回来，任务列表与客户端内一致，无残留</td></tr>
+      <tr><td>M3 体验完善</td><td>托盘常驻、开机自启、搜索筛选、任务跳转</td><td>日常使用不再需要打开客户端账号菜单</td></tr>
+    </tbody>
+  </table>
+  <p>M0 和 M1 是关键路径上的两道关。M0 证明数据能读到，M1 证明凭据能写回 —— 这两个通了，产品就成立了。</p>
+</section>
+
+<section>
+  <h2><span class="num">09</span>风险与对策</h2>
+  <table>
+    <thead><tr><th>风险</th><th>概率</th><th>影响</th><th>对策</th></tr></thead>
+    <tbody>
+      <tr><td>客户端升级后 auth 格式变化</td><td class="part">中</td><td>切号失效</td><td>适配层隔离 + 版本探测；失败即回滚，不写坏原文件</td></tr>
+      <tr><td>切号时客户端正在跑任务</td><td class="part">中</td><td>任务中断</td><td>检测 <code>status='working'</code> 并强提示；不静默杀进程</td></tr>
+      <tr><td>token 刷新后未回写</td><td class="part">中</td><td>账号下次不可用</td><td>刷新即回写 + 写前比对文件未被他人改动</td></tr>
+      <tr><td>WAL 读取不完整</td><td class="no">低</td><td>最新任务漏显示</td><td>只读 URI + <code>immutable=0</code>；监听 wal 变化重读</td></tr>
+      <tr><td>明文凭据集中</td><td class="yes">已接受</td><td>账号库泄露即失守</td><td>按你的决定不加密；文档与界面明确提示存放位置</td></tr>
+      <tr><td>多账号使用触及服务条款</td><td class="part">中</td><td>账号被处置</td><td>定位为自有账号管理工具；不做分发、不做代登录</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p>最后一条要重申：这个工具的合理边界是<strong>管理你自己名下已登录过的账号</strong>。「帮你登录别人的账号」「对外提供账号池」都不在范围内 —— 前者技术上做不到（需要对方扫码/验证码），后者性质完全不同。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">10</span>下一步</h2>
+  <p>方案已经收敛，可以直接开工。建议的第一步不是写界面，而是<strong>把 M1 的对拍测试跑通</strong>：</p>
+  <ol>
+    <li>用现有 TS 实现解一份 <code>workbuddy-desktop.info</code>，拿到明文基准；</li>
+    <li>写 Rust 版解密，逐一比对每个字段；</li>
+    <li>再反向加密一次，写回去，确认客户端能正常启动且仍是同一账号。</li>
+  </ol>
+  <p>这一步通过，剩下的都是常规工程；不通过，说明客户端格式比预期复杂，需要重新评估周期 —— 这个风险要最先暴露，而不是藏在最后。</p>
+  <p>需要我现在就开始搭 M0 + M1 的骨架吗？我会先建 <code>workbuddy-hub/</code> 的 Tauri 工程，把 <code>auth_crypto</code> 和 <code>task_index</code> 两个模块写出来，配上对拍脚本。</p>
+</section>
+
+<footer>
+  本方案所有数据结论来自对 <code>~/.workbuddy</code>、<code>%LOCALAPPDATA%\CodeBuddyExtension</code>、
+  <code>~/.dsh</code> 的只读探测，以及 <code>dsh-workbuddy-switcher 0.2.4</code> 源码中已验证的加解密实现。
+  未对任何客户端文件做写入。
+</footer>
+
+</div>
+</body>
+</html>

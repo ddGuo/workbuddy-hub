@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>workbuddy-hub · 方案 v0.3</title>
+<style>
+  :root{
+    --bg:#0f0f0e; --panel:#181817; --panel-2:#1e1e1c; --line:#302f2c;
+    --ink:#e9e7e1; --ink-2:#a5a29a; --ink-3:#75726b;
+    --accent:#8fa3e8; --accent-dim:#242a45;
+    --warn:#d99a63; --warn-dim:#3a2a1c;
+    --ok:#86b98a;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px; line-height:1.75; font-weight:400;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:56px 32px 120px}
+  header{border-bottom:1px solid var(--line); padding-bottom:32px; margin-bottom:44px}
+  .eyebrow{font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); margin:0 0 12px}
+  h1{font-size:29px; line-height:1.4; font-weight:500; margin:0 0 14px; letter-spacing:-.01em}
+  .lede{font-size:15px; color:var(--ink-2); margin:0; max-width:760px}
+  .meta{display:flex; flex-wrap:wrap; gap:8px; margin-top:22px}
+  .tag{font-size:12px; padding:3px 10px; border:1px solid var(--line); border-radius:999px; color:var(--ink-2); background:var(--panel)}
+  .tag.on{border-color:#3b4468; background:var(--accent-dim); color:#b9c6f5}
+  section{margin:0 0 54px}
+  h2{font-size:19px; font-weight:500; margin:0 0 18px; padding-left:14px; border-left:3px solid var(--accent); line-height:1.4}
+  h2 .num{color:var(--ink-3); font-family:var(--mono); font-size:14px; margin-right:8px}
+  h3{font-size:15px; font-weight:500; margin:28px 0 10px; color:var(--ink)}
+  p{margin:0 0 14px; color:var(--ink-2)}
+  p strong,li strong{color:var(--ink); font-weight:500}
+  ul,ol{margin:0 0 16px; padding-left:22px; color:var(--ink-2)}
+  li{margin:6px 0}
+  code{font-family:var(--mono); font-size:12.5px; background:var(--panel-2); border:1px solid var(--line); border-radius:4px; padding:1px 5px; color:#cfcabb}
+  .callout{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:0 8px 8px 0; padding:16px 20px; margin:20px 0}
+  .callout p:last-child{margin:0}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.ok{border-left-color:var(--ok)}
+  table{width:100%; border-collapse:collapse; margin:18px 0 22px; font-size:13px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--ink-3); font-weight:500; font-size:12px; letter-spacing:.04em; border-bottom:1px solid #3d3c38}
+  td{color:var(--ink-2)}
+  td:first-child{color:var(--ink); font-weight:500}
+  tbody tr:hover{background:#141413}
+  .yes{color:var(--ok)} .no{color:var(--ink-3)} .part{color:var(--warn)}
+  .pick{background:var(--accent-dim) !important}
+  .pick td:first-child{color:#b9c6f5}
+  .lane{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:20px 0}
+  .lane-card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px}
+  .lane-card h4{margin:0 0 4px; font-size:14px; font-weight:500}
+  .lane-card .sub{font-size:11.5px; color:var(--ink-3); margin-bottom:12px}
+  .lane-card ul{padding-left:18px; margin:0 0 10px; font-size:12.5px}
+  .lane-card li{margin:4px 0}
+  .lane-card.rec{border-color:#3b4468; background:var(--accent-dim)}
+  .lane-card.rec h4{color:#b9c6f5}
+  pre{background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px 18px; overflow-x:auto; margin:16px 0 22px; font-family:var(--mono); font-size:12.5px; line-height:1.65; color:#bdb9ac}
+  pre .c{color:#6b6862}
+  pre .k{color:#9db0e8}
+  pre .s{color:#a9bf86}
+  .flow{margin:22px 0; counter-reset:step}
+  .step{position:relative; padding-left:44px; padding-bottom:18px; border-left:1px solid var(--line); margin-left:14px}
+  .step:last-child{border-left-color:transparent; padding-bottom:0}
+  .step::before{counter-increment:step; content:counter(step); position:absolute; left:-14px; top:0; width:27px; height:27px; border-radius:50%; background:var(--panel-2); border:1px solid var(--line); color:var(--accent); font-family:var(--mono); font-size:12px; display:flex; align-items:center; justify-content:center}
+  .step b{display:block; color:var(--ink); font-weight:500; margin-bottom:3px}
+  .step p{margin:0; font-size:13px}
+  footer{border-top:1px solid var(--line); padding-top:24px; color:var(--ink-3); font-size:12.5px}
+  @media (max-width:760px){ .wrap{padding:36px 20px 80px} h1{font-size:23px} .lane{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">技术方案 · v0.3 · 需求变更</p>
+  <h1>两个新需求，一个能直接做，一个要先做决定</h1>
+  <p class="lede">
+    「限流时自动无感切换」和「切号后任务全部归集到当前账号」。
+    前者在客户端场景下有两条完全不同的路，代价差一个数量级；
+    后者数据层已经验证可行，代码已落地。
+  </p>
+  <div class="meta">
+    <span class="tag on">任务归集：已实现</span>
+    <span class="tag">限流切换：待决策</span>
+    <span class="tag">2026-10-21</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span>需求变更</h2>
+  <table>
+    <thead><tr><th>编号</th><th>新需求</th><th>难度判断</th></tr></thead>
+    <tbody>
+      <tr><td>R1</td><td>任务运行中被限流时，自动无感切换到其他账号</td><td class="part">有两条路，代价差一个数量级</td></tr>
+      <tr><td>R2</td><td>切换账号时，把所有任务同步到当前账号的客户端任务列表</td><td class="yes">数据层已验证可行，已实现</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p>R1 和 R2 有冲突：R2 要求「改数据库归属」，R1 要求「任务不中断」。而改归属必须重启客户端才生效，<strong>重启一定中断任务</strong>。所以两者要分开处理 —— 归集负责「切完之后能看到全部」，无感切换负责「切的时候不打断」，不能指望同一个动作同时满足。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">02</span>R1 · 无感切换能做到什么程度</h2>
+  <p>先明确一件事：客户端的模型请求是客户端自己发出去的 HTTPS 流量，hub 作为外部进程<strong>默认看不到、也改不了</strong>。所谓「无感切换」，本质是「在请求层换掉凭据并重放，让客户端以为一切正常」。</p>
+
+  <h3>实测证据（来自客户端 app.asar 与配置）</h3>
+  <table>
+    <thead><tr><th>探测项</th><th>结果</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>客户端代理支持</td><td class="yes">存在 <code>WORKBUDDY_PROXY_ENV_KEYS</code> / <code>WORKBUDDY_PROXY_SOURCE</code></td><td>客户端会读代理配置，可被指向本地代理</td></tr>
+      <tr><td>自定义证书校验</td><td class="yes">无 <code>setCertificateVerifyProc</code></td><td>没有拦截证书校验的钩子，系统信任的根证书会被接受</td></tr>
+      <tr><td>证书固定（pinning）</td><td class="yes">未发现有效字符串证据</td><td>MITM 大概率不会被 pinning 挡住</td></tr>
+      <tr><td>API 端点</td><td><code>www.workbuddy.cn</code>（另有 staging）</td><td>域名集中，代理规则简单</td></tr>
+      <tr><td>错误码</td><td>客户端内不含 <code>soft_rate</code> / <code>hard_credit</code></td><td>那是 DSH 插件的分类；客户端侧要按 HTTP 状态码判断</td></tr>
+    </tbody>
+  </table>
+
+  <h3>两条路</h3>
+  <div class="lane">
+    <div class="lane-card rec">
+      <h4>L1 · 检测 + 自动切号 + 提示重试</h4>
+      <div class="sub">半自动 · 零侵入 · 本周可交付</div>
+      <ul>
+        <li>监听数据库里任务状态变 <code>error</code></li>
+        <li>读会话 jsonl 尾部，识别限流关键词</li>
+        <li>自动切到健康账号（含归集）</li>
+        <li>重启后把任务拉回前台，给一个「继续」按钮</li>
+      </ul>
+      <p style="font-size:12.5px;margin:0"><strong>损失：</strong>一次点击 + 一次重启（约 5 秒）。<strong>收益：</strong>不需要证书、不碰网络栈、不会被客户端升级打穿。</p>
+    </div>
+    <div class="lane-card">
+      <h4>L2 · 本地代理 + TLS 中间人</h4>
+      <div class="sub">真无感 · 重 · 1–2 周</div>
+      <ul>
+        <li>客户端走 <code>127.0.0.1:port</code> 代理</li>
+        <li>hub 自签 CA，安装进系统信任区</li>
+        <li>解密请求 → 识别 429/402 → 换 token 重放</li>
+        <li>SSE 流式响应原样透传</li>
+      </ul>
+      <p style="font-size:12.5px;margin:0"><strong>代价：</strong>装根证书（管理员权限、安全责任转移）、流式透传复杂度、客户端升级可能改端点。</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <p><strong>我的建议：先做 L1。</strong>它解决的是「不用手动找账号」这个真实痛点，代价是可预期的一次重启。L2 能把最后那 5 秒也吃掉，但它把「你的所有 API 流量经过我的中间人」变成默认行为 —— 这个决定应该单独做，而不是顺手塞进来。</p>
+  </div>
+
+  <p>如果之后要上 L2，实现时只需要替换「检测到限流之后做什么」这一段：L1 是切号重启，L2 是换 token 重放。上层的判定逻辑（什么算限流、冷却多久、选哪个账号）完全复用。</p>
+</section>
+
+<section>
+  <h2><span class="num">03</span>R2 · 任务归集</h2>
+  <p>做法很直接：把 <code>sessions.user_id</code> 统一改成当前账号，客户端原生列表就会显示全部任务。关键是确认这个改动安全。</p>
+
+  <h3>实测前提</h3>
+  <table>
+    <thead><tr><th>检查项</th><th>结果</th><th>为什么重要</th></tr></thead>
+    <tbody>
+      <tr><td>会话传输方式</td><td class="yes">18 条全部 <code>transport='local'</code></td><td>不上云，改归属不会被服务端覆盖或回滚</td></tr>
+      <tr><td>触发器 / 视图</td><td class="yes">0 个</td><td>没有级联副作用</td></tr>
+      <tr><td>外键引用</td><td class="yes">无（<code>session_usage</code> 按 session_id 关联）</td><td>不会破坏关联完整性</td></tr>
+      <tr><td>索引</td><td class="yes">涉及 <code>user_id</code> 的 4 个索引都是 <code>WHERE transport='cloud'</code></td><td>local 行不在索引里，改写不触发索引维护问题</td></tr>
+    </tbody>
+  </table>
+
+  <h3>设计</h3>
+  <pre><span class="c">// 归集时：改归属前先把原始归属记下来</span>
+<span class="k">UPDATE</span> sessions <span class="k">SET</span> user_id = :target <span class="k">WHERE</span> user_id &lt;&gt; :target;
+
+<span class="c">// ~/.workbuddy-hub/ownership.json</span>
+{
+  <span class="k">"unified_to"</span>: <span class="s">"db0427fd-…"</span>,
+  <span class="k">"sessions"</span>: { <span class="s">"9bb9bbc1-…"</span>: <span class="s">"4dba68a4-…"</span>, <span class="s">"95ab5ada-…"</span>: <span class="s">"8bc5fd09-…"</span> }
+}</pre>
+
+  <p>四个设计要点：</p>
+  <ul>
+    <li><strong>幂等。</strong>只对「归属表里还没有」的会话记录原始 uid。重复执行不会把已经改过的 uid 当成原始值再记一遍 —— 否则回滚会把任务错误地塞回上一个中转账号。</li>
+    <li><strong>可回滚。</strong><code>hub unify --rollback</code> 按归属表逐条恢复。这是改数据库的前提。</li>
+    <li><strong>先快照。</strong>写库前用 SQLite 在线备份接口做一致性快照（WAL 里未 checkpoint 的数据也会带上），落在 <code>~/.workbuddy-hub/backups/</code>。</li>
+    <li><strong>真实归属仍可追溯。</strong>hub 自己的界面按归属表显示真实账号，只有客户端原生列表被「抹平」。</li>
+  </ul>
+
+  <div class="callout warn">
+    <p><strong>还没验证的一件事：</strong>客户端启动时会不会按当前 uid 清理「不属于自己」的会话。静态分析看不到这种行为，只能实测。所以第一次真实归集建议在<strong>备份完整、且你不在跑任务</strong>的时候做，重启后如果列表异常，一条 <code>--rollback</code> 就能恢复。</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">04</span>归集 + 切号的完整时序</h2>
+  <p>两个动作合并成一个「切换」操作，顺序不能颠倒 —— 先退出再改库，避免与客户端抢写锁。</p>
+  <div class="flow">
+    <div class="step"><b>前置检查</b><p>目标账号凭据有效；统计当前有多少 <code>working</code> 任务并明确告知会中断。</p></div>
+    <div class="step"><b>双备份</b><p>凭据文件 → <code>backups/workbuddy-desktop.*.info</code>；数据库 → <code>backups/workbuddy-*.db</code>（在线快照）。</p></div>
+    <div class="step"><b>退出客户端</b><p>优雅关闭，轮询 pid 确认退出；超时才强制结束。</p></div>
+    <div class="step"><b>写凭据</b><p>用 at-rest 密钥封装目标账号令牌，原子写入 auth 文件。</p></div>
+    <div class="step"><b>归集任务</b><p>补齐原始归属表 → 一个事务改完所有 <code>user_id</code> → 回读校验。</p></div>
+    <div class="step"><b>启动客户端</b><p>拉起客户端，等 auth 文件被重新写入确认登录成功；任一环节失败自动回滚两份备份。</p></div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">05</span>代码现状</h2>
+  <table>
+    <thead><tr><th>模块</th><th>状态</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>task_unify</code></td><td class="yes">已实现</td><td>计划 / 在线备份 / 幂等归集 / 回滚 / 状态查询</td></tr>
+      <tr><td><code>switch_engine</code></td><td class="yes">已实现</td><td>备份 / 原子写 / 回读校验 / 回滚</td></tr>
+      <tr><td>CLI <code>unify</code></td><td class="yes">已可用</td><td>默认演练，<code>--force</code> 写库，<code>--status</code> / <code>--rollback</code></td></tr>
+      <tr><td>界面接归集</td><td class="no">未做</td><td>需要先定「切号按钮」的交互</td></tr>
+      <tr><td>L1 限流检测</td><td class="no">未做</td><td>需要先确认 jsonl 里错误信息的落点</td></tr>
+      <tr><td>L2 代理</td><td class="no">未做</td><td>等你决定是否接受装根证书</td></tr>
+    </tbody>
+  </table>
+
+  <p>归集演练的实际输出（未改动数据库）：</p>
+  <pre>== 归集计划 ==
+  目标账号 : db0427fd
+  会话总数 : 18
+  需改归属 : 17 条
+  已在名下 : 1 条
+  归属表   : 已有 0 条记录，本次新增 17 条
+  原始分布 :
+    4dba68a4  1 条
+    697af213  1 条
+    8bc5fd09  15 条
+    db0427fd  1 条</pre>
+
+  <p>注意 <code>8bc5fd09</code> 是 15 条而界面显示 9 条 —— 因为归集要覆盖已软删除的会话，否则它们会留在旧账号名下，导致「删除的任务换个号又出现」。</p>
+</section>
+
+<section>
+  <h2><span class="num">06</span>需要你定的三件事</h2>
+  <ol>
+    <li><strong>L2 要不要做。</strong>要装一张自签根证书到系统信任区，之后你机器上所有走代理的 HTTPS 都多一个中间人（只处理 workbuddy 域名，但证书是系统级的）。这是安全决策，不是技术决策，我不替你定。</li>
+    <li><strong>归集做成切号的默认行为吗。</strong>是的话，每次切号都会改 <code>user_id</code>；不是的话，需要单独一个「同步任务到当前账号」按钮。</li>
+    <li><strong>什么时候做真实切号验证。</strong>它会重启客户端并中断当前会话。建议你手头没有任务在跑的时候，我把 <code>--force</code> 之后的进程控制补完，你跑一次。</li>
+  </ol>
+</section>
+
+<footer>
+  R1 的代理与证书结论来自对 <code>D:\WorkBuddy\resources\app.asar</code> 的字符串检索
+  （<code>WORKBUDDY_PROXY_ENV_KEYS</code>、<code>setCertificateVerifyProc</code> 计数）；
+  R2 的结论来自 <code>workbuddy.db</code> 的 schema 与索引定义。两者均为只读探测，未修改任何客户端文件。
+</footer>
+
+</div>
+</body>
+</html>

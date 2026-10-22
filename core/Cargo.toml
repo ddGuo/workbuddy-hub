@@ -1,0 +1,20 @@
+[package]
+name = "hub-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "workbuddy-hub 核心逻辑：客户端适配、凭据加解密、账号库、任务聚合"
+
+[dependencies]
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+anyhow = "1"
+
+[lib]
+name = "hub_core"
+path = "src/lib.rs"

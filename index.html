@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WorkBuddy Hub</title>
+    <script>
+      // 在样式表加载前先定主题，避免浅色系统下闪一下黑屏
+      (function () {
+        var mode = 'system';
+        try {
+          mode = localStorage.getItem('hub.theme') || 'system';
+        } catch (e) {}
+        // 调试用：?theme=light|dark 临时覆盖，不影响已保存的偏好
+        var q = new URLSearchParams(location.search).get('theme');
+        if (q === 'light' || q === 'dark') mode = q;
+        var dark =
+          mode === 'dark' ||
+          (mode !== 'light' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0d13;
+        color: #e9ecf5;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+          sans-serif;
+      }
+      html[data-theme='light'],
+      html[data-theme='light'] body {
+        background: #f4f6fc;
+        color: #171b26;
+      }
+      #root {
+        height: 100%;
+      }
+      .boot {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        font-size: 13px;
+        color: #6f7789;
+      }
+      html[data-theme='light'] .boot {
+        color: #8b93a6;
+      }
+      .boot::before {
+        content: '';
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #7c8cf8;
+        animation: blink 1s ease-in-out infinite;
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 0.25;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .boot-err {
+        margin: 0;
+        padding: 28px 32px;
+        font-family: ui-monospace, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.7;
+        color: #e7726b;
+        white-space: pre-wrap;
+        word-break: break-all;
+        background: #1a1210;
+        height: 100%;
+        box-sizing: border-box;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot">正在加载界面</div></div>
+
+    <script>
+      // 前端脚本加载或执行失败时，把原因显示出来，而不是留一个纯黑窗口。
+      (function () {
+        function show(title, detail) {
+          var root = document.getElementById('root');
+          if (!root) return;
+          if (root.querySelector('.app')) return; // 已经渲染成功，不覆盖
+          var text = title + '\n\n' + detail;
+          root.innerHTML = '';
+          var pre = document.createElement('pre');
+          pre.className = 'boot-err';
+          pre.textContent =
+            text +
+            '\n\n---\n如果这里是空白加载失败，先确认开发服务器在跑：npm run dev\n' +
+            '地址：' +
+            location.href;
+          root.appendChild(pre);
+        }
+
+        window.addEventListener('error', function (e) {
+          if (e.target && e.target.tagName === 'SCRIPT') {
+            show('脚本加载失败', '无法加载 ' + (e.target.src || '内联脚本'));
+            return;
+          }
+          show('运行出错', (e.message || String(e.error)) + '\n' + (e.filename || '') + ':' + (e.lineno || ''));
+        });
+
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason;
+          show('未处理的 Promise 异常', (r && (r.stack || r.message)) || String(r));
+        });
+
+        // 若 6 秒后仍然没有任何内容，说明模块根本没执行到这里
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && root.querySelector('.boot')) {
+            show('界面没有启动', '模块脚本可能没有执行。检查 index.html 的 script 标签与开发服务器。');
+          }
+        }, 6000);
+      })();
+    </script>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

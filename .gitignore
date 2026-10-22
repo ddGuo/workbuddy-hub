@@ -1,0 +1,27 @@
+# 构建产物
+node_modules/
+node_modules.pnpm-old/
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
+*.exe
+*.dmp
+
+# 依赖锁的遗留副本
+pnpm-lock.yaml.old
+
+# 本地环境
+.env
+.env.local
+*.log
+
+# 本机状态（会话记忆、临时截图）
+.workbuddy/
+.preview/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
