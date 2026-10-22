@@ -39,6 +39,7 @@ hub 在切号时会把已有会话的归属改到新账号，于是：
 
 - **换号不断档**：切号后任务不丢、上下文跟着走，接着原对话继续
 - **任务总览**：跨账号聚合，状态筛选、标题 / 路径 / 账号搜索（按 `/` 聚焦），按账号或时间分组
+- **账号自动存档**：客户端登录一个新账号，hub 就存一份到自己的账号库，不再依赖外部工具
 - **账号识别**：列表显示脱敏手机号（如 `199****9283`），没有手机号时回退昵称 / uid 前缀
 - **一键切号**：备份凭据与数据库 → 原子写入 → 归集 → 重启客户端，失败自动回滚
 - **任务归集**：改写 `sessions.user_id`，让客户端原生列表显示全部任务，原始归属单独存档
@@ -328,7 +329,7 @@ workbuddy-hub/
 | 会话索引 | `~/.workbuddy/workbuddy.db` → `sessions` 表 |
 | 会话正文 | `~/.workbuddy/projects/<编码 cwd>/<session-id>.jsonl` |
 | 客户端凭据 | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
-| 账号库（复用 DSH） | `~/.dsh/workbuddy-accounts/<uid>.json` |
+| 账号库（自动存档） | `~/.workbuddy-hub/accounts/<uid>.json` |
 | hub 状态 | `~/.workbuddy-hub/`：`ownership.json`、`runtime.json`、`checkin.json`、`profiles.json`、`backups/` |
 
 凭据格式与加解密细节见[技术说明第十节](docs/workbuddy-hub-技术说明.md)。

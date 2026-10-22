@@ -39,6 +39,7 @@ Verified against 9 accounts: after unifying, the task list is complete and the c
 
 - **Zero-gap switching** — tasks survive the switch, conversations pick up where they left off
 - **Task overview** — cross-account list, status filters, search by title / path / account (`/` to focus), grouped by account or time
+- **Automatic account archive** — sign a new account into the client and hub saves it, no external tool needed
 - **Account identity** — masked phone numbers (`199****9283`), falling back to nickname or uid prefix
 - **One-click switch** — backup credentials and database → atomic write → unify → restart, automatic rollback on failure
 - **Task unification** — rewrites `sessions.user_id` so the native list shows everything; original ownership archived
@@ -347,7 +348,7 @@ workbuddy-hub/
 | Session index | `~/.workbuddy/workbuddy.db` → `sessions` |
 | Conversation body | `~/.workbuddy/projects/<encoded cwd>/<session-id>.jsonl` |
 | Client credentials | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
-| Account library (DSH) | `~/.dsh/workbuddy-accounts/<uid>.json` |
+| Account library (auto-saved) | `~/.workbuddy-hub/accounts/<uid>.json` |
 | hub state | `~/.workbuddy-hub/`: `ownership.json`, `runtime.json`, `checkin.json`, `profiles.json`, `backups/` |
 
 Credential format and crypto details: [technical notes, section 10](docs/workbuddy-hub-技术说明.md)

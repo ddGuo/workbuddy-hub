@@ -127,6 +127,16 @@ fn db_path() -> Result<std::path::PathBuf, String> {
     Ok(root.join("workbuddy.db"))
 }
 
+/// 把客户端当前登录的账号同步进 hub 的账号库。
+#[tauri::command]
+fn sync_current_account() -> Result<Option<String>, String> {
+    let Some(auth) = client_compat::auth_file() else {
+        return Ok(None);
+    };
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    account_store::save_current(&auth, &dir).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn probe() -> Result<ProbeOut, String> {
     on_blocking(probe_blocking).await
@@ -134,7 +144,7 @@ async fn probe() -> Result<ProbeOut, String> {
 
 fn probe_blocking() -> Result<ProbeOut, String> {
     let root = client_compat::data_root().map_err(|e| e.to_string())?;
-    let accounts_dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let accounts_dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
 
     // 取密钥会启动一个短命的 Node 进程，放在这里只为在界面上显示 keyId；
     // 失败不影响其它功能。
@@ -162,7 +172,7 @@ fn list_tasks() -> Result<Vec<task_index::TaskRow>, String> {
 
 #[tauri::command]
 fn list_accounts() -> Result<Vec<account_store::AccountSummary>, String> {
-    let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
     Ok(accounts.iter().map(|a| a.summary()).collect())
 }
@@ -221,7 +231,7 @@ async fn switch_plan(target: String) -> Result<switch_engine::SwitchPlan, String
 }
 
 fn switch_plan_blocking(target: &str) -> Result<switch_engine::SwitchPlan, String> {
-    let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
     let account = match_account(&accounts, target)?;
 
@@ -355,7 +365,7 @@ fn run_checkins(
         let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
         let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
         let key = AtRestKey::from_secret(&secret);
-        let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+        let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
         let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
 
         let mut claimed = 0usize;
@@ -497,7 +507,7 @@ fn profiles_refresh_blocking(force: Option<bool>) -> Result<profile::ProfileStor
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe")?;
     let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
-    let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
 
     for a in &accounts {
@@ -600,7 +610,7 @@ fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String,
 
     let _guard = BusyGuard::acquire(&SWITCH_RUNNING, "正在切换账号，请稍候")?;
 
-    let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
     let account = match_account(&accounts, target)?;
 
@@ -645,7 +655,7 @@ fn resolve_target_uid(target: Option<String>) -> Result<String, String> {
             switch_engine::current_uid(&auth).map_err(|e| e.to_string())
         }
         Some(prefix) => {
-            let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+            let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
             let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
             let hits: Vec<_> = accounts
                 .iter()
@@ -795,6 +805,33 @@ pub fn run() {
                 });
             }
 
+            // 客户端登录新账号时自动存档：轮询凭据文件的 mtime，
+            // 变化就把它写进 hub 自己的账号库，并通知前端刷新列表。
+            {
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let mut last = None;
+                    loop {
+                        if let Some(auth) = client_compat::auth_file() {
+                            let stamp = std::fs::metadata(&auth)
+                                .and_then(|m| m.modified())
+                                .ok();
+                            if stamp.is_some() && stamp != last {
+                                if let Ok(dir) = client_compat::accounts_dir() {
+                                    if let Ok(Some(uid)) = account_store::save_current(&auth, &dir)
+                                    {
+                                        let _ = handle.emit("accounts-updated", uid);
+                                    }
+                                }
+                                last = stamp;
+                            }
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(10));
+                    }
+                });
+            }
+
             // 账号资料：启动 8 秒后补一次（只有缺失或超过 7 天的才会真请求）
             {
                 use tauri::Emitter;
@@ -838,6 +875,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             probe,
             auth_state,
+            sync_current_account,
             list_tasks,
             list_accounts,
             current_uid,

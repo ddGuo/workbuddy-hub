@@ -117,11 +117,12 @@ pub fn data_root() -> Result<PathBuf> {
 }
 
 /// DSH 账号库目录（复用现有凭据池）。
-pub fn dsh_accounts_dir() -> Result<PathBuf> {
+pub fn accounts_dir() -> Result<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| anyhow!("无法确定用户主目录"))?;
-    Ok(PathBuf::from(home).join(".dsh/workbuddy-accounts"))
+    // hub 自己的账号库：客户端登录一个账号就自动存一份，不再依赖 DSH
+    Ok(PathBuf::from(home).join(".workbuddy-hub").join("accounts"))
 }
 
 /// hub 自己的数据目录（状态、原始归属表、备份）。

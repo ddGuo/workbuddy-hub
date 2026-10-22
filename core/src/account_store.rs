@@ -77,6 +77,66 @@ impl Account {
     }
 }
 
+/// 把客户端当前登录的账号写进 hub 自己的账号库。
+///
+/// 数据源是客户端的凭据文件：客户端登录一个账号，这里就存一份；令牌刷新后
+/// 再次登录会用新值覆盖。内容没变时不落盘，调用方可以安全地反复调用。
+pub fn save_current(auth_path: &Path, dir: &Path) -> Result<Option<String>> {
+    let text = fs::read_to_string(auth_path)
+        .with_context(|| format!("读取凭据文件失败：{}", auth_path.display()))?;
+    let doc: Value = serde_json::from_str(&text).context("凭据文件不是合法 JSON")?;
+
+    let uid = doc
+        .get("account")
+        .and_then(|a| a.get("uid"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("凭据文件里没有账号 uid"))?
+        .to_string();
+
+    let auth = match doc.get("auth") {
+        Some(v) if v.is_object() => v,
+        _ => bail!("凭据文件里没有 auth 字段"),
+    };
+
+    fs::create_dir_all(dir)
+        .with_context(|| format!("创建账号库目录失败：{}", dir.display()))?;
+    let target = dir.join(format!("{uid}.json"));
+
+    // 令牌可能是明文，也可能是客户端自己的 $wbEncrypted 信封；
+    // 原样拷贝，读取时由 read_token 统一处理，不在这里解密。
+    let out = serde_json::json!({
+        "account": { "uid": uid },
+        "auth": {
+            "accessToken": auth.get("accessToken").cloned().unwrap_or(Value::Null),
+            "refreshToken": auth.get("refreshToken").cloned().unwrap_or(Value::Null),
+            "expiresAt": auth.get("expiresAt").cloned().unwrap_or(Value::Null),
+            "refreshExpiresAt": auth.get("refreshExpiresAt").cloned().unwrap_or(Value::Null),
+            "domain": auth.get("domain").cloned().unwrap_or(Value::Null),
+        }
+    });
+
+    if let Ok(old) = fs::read_to_string(&target) {
+        if serde_json::from_str::<Value>(&old).map(|v| v == out).unwrap_or(false) {
+            return Ok(None);
+        }
+    }
+
+    let body = serde_json::to_string_pretty(&out)?;
+    let tmp = target.with_extension("json.tmp");
+    fs::write(&tmp, body).with_context(|| format!("写入临时存档失败：{}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, &target) {
+        let _ = fs::remove_file(&tmp);
+        // 并发写入时另一个调用可能已经写好，不算失败
+        if target.exists() {
+            return Ok(None);
+        }
+        return Err(e).with_context(|| format!("写入账号存档失败：{}", target.display()));
+    }
+    Ok(Some(uid))
+}
+
 fn read_token(value: &Value, key: &AtRestKey) -> Result<String> {
     if let Some(s) = value.as_str() {
         return Ok(s.to_string());
@@ -112,8 +172,9 @@ fn is_canonical(name: &str) -> bool {
 
 /// 读取整个账号库，按 uid 去重。
 pub fn load(dir: &Path) -> Result<Vec<Account>> {
+    // 新机器上还没跑过导入，目录本来就不存在：这是「空库」不是错误
     if !dir.is_dir() {
-        bail!("账号库目录不存在：{}", dir.display());
+        return Ok(Vec::new());
     }
 
     let mut by_uid: std::collections::BTreeMap<String, Account> = Default::default();
@@ -196,11 +257,57 @@ pub fn skipped_files(dir: &Path) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_canonical;
+    use super::*;
+    use std::fs;
 
     #[test]
     fn accepts_uuid_json() {
         assert!(is_canonical("697af213-6a63-4edb-ad9c-1ff588ee434d.json"));
+    }
+
+    #[test]
+    fn missing_dir_loads_empty() {
+        let dir = std::env::temp_dir().join("hub-missing-account-dir-for-test");
+        let _ = fs::remove_dir_all(&dir);
+        assert!(load(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn saves_current_account_and_updates_changed_tokens() {
+        let root = std::env::temp_dir().join(format!("hub-import-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let auth = root.join("workbuddy-desktop.info");
+        fs::write(
+            &auth,
+            serde_json::json!({
+                "account": { "uid": "abc-123" },
+                "auth": {
+                    "accessToken": { "$wbEncrypted": 1, "envelope": "e1" },
+                    "refreshToken": "rt",
+                    "expiresAt": 123,
+                    "refreshExpiresAt": 456,
+                    "domain": "www.workbuddy.cn"
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let dir = root.join("accounts");
+        assert_eq!(save_current(&auth, &dir).unwrap().as_deref(), Some("abc-123"));
+
+        let saved: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("abc-123.json")).unwrap()).unwrap();
+        assert_eq!(saved["account"]["uid"], "abc-123");
+        assert_eq!(saved["auth"]["refreshToken"], "rt");
+        assert_eq!(saved["auth"]["domain"], "www.workbuddy.cn");
+        assert!(saved["auth"]["accessToken"].get("envelope").is_some());
+
+        // 第二次不覆盖
+        assert!(save_current(&auth, &dir).unwrap().is_none());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

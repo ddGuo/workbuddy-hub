@@ -90,7 +90,7 @@ fn cmd_probe() -> Result<()> {
         db.display(),
         if db.is_file() { "" } else { "(不存在)" }
     );
-    let accounts = client_compat::dsh_accounts_dir()?;
+    let accounts = client_compat::accounts_dir()?;
     println!(
         "  账号库目录 : {} {}",
         accounts.display(),
@@ -112,7 +112,7 @@ fn cmd_probe() -> Result<()> {
 }
 
 fn load_accounts_with_counts() -> Result<(Vec<Account>, HashMap<String, usize>)> {
-    let dir = client_compat::dsh_accounts_dir()?;
+    let dir = client_compat::accounts_dir()?;
     let accounts = account_store::load(&dir)?;
     let db = client_compat::data_root()?.join("workbuddy.db");
     let mut counts = HashMap::new();
@@ -354,7 +354,7 @@ fn cmd_profile(args: &[String]) -> Result<()> {
     let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
     let secret = client_compat::at_rest_secret(&exe)?;
     let key = AtRestKey::from_secret(&secret);
-    let accounts = account_store::load(&client_compat::dsh_accounts_dir()?)?;
+    let accounts = account_store::load(&client_compat::accounts_dir()?)?;
     let now = now_secs();
 
     println!("账号资料");
@@ -406,7 +406,7 @@ fn cmd_checkin(args: &[String]) -> Result<()> {
     let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
     let secret = client_compat::at_rest_secret(&exe)?;
     let key = AtRestKey::from_secret(&secret);
-    let dir = client_compat::dsh_accounts_dir()?;
+    let dir = client_compat::accounts_dir()?;
     let accounts = account_store::load(&dir)?;
     let now = now_secs();
     let today = format_date(now);
@@ -600,7 +600,7 @@ fn cmd_watch(args: &[String]) -> Result<()> {
                 continue;
             }
 
-            let accounts = account_store::load(&client_compat::dsh_accounts_dir()?)?;
+            let accounts = account_store::load(&client_compat::accounts_dir()?)?;
             let auth_path = client_compat::auth_file()
                 .ok_or_else(|| anyhow::anyhow!("找不到凭据文件"))?;
             let current = switch_engine::current_uid(&auth_path)?;

@@ -9,6 +9,7 @@ import {
   checkinRun,
   checkinSetAuto,
   authState,
+  syncCurrentAccount,
   describeError,
   isTauri,
   listAccounts,
@@ -159,10 +160,15 @@ export default function App() {
     const un1 = listen<string>('switch-progress', (e) => setProgress(e.payload));
     const un2 = listen<string>('checkin-progress', (e) => setCheckinStep(e.payload));
     const un3 = listen<ProfileStore>('profiles-updated', (e) => setProfiles(e.payload));
+    // 客户端登录新账号后，后台会存进账号库并推这个事件
+    const un4 = listen<string>('accounts-updated', () => {
+      listAccounts().then(setAccounts).catch(() => {});
+    });
     progressRef.current = () => {
       void un1.then((f) => f());
       void un2.then((f) => f());
       void un3.then((f) => f());
+      void un4.then((f) => f());
     };
     return () => {
       progressRef.current?.();
@@ -195,8 +201,12 @@ export default function App() {
     setError(null);
     try {
       // 首批只读本地文件：账号与任务先出来
-      const [t, a] = await Promise.allSettled([listTasks(), listAccounts()]);
       const nextAuth = await authState();
+      // 新机器上账号库可能还不存在：把当前登录的账号导入一份
+      if (nextAuth.logged_in) {
+        await syncCurrentAccount().catch(() => {});
+      }
+      const [t, a] = await Promise.allSettled([listTasks(), listAccounts()]);
       if (seq !== loadSeq.current) return;
 
       if (t.status === 'fulfilled') setTasks(t.value);
@@ -235,6 +245,7 @@ export default function App() {
           setAuth(next);
           setCurrent(next.current_uid ?? '');
           if (next.logged_in) {
+            await syncCurrentAccount().catch(() => {});
             listAccounts().then(setAccounts).catch(() => {});
           }
         })();
@@ -708,7 +719,7 @@ export default function App() {
             {accounts.length === 0 && (
               <div className="rail-empty">
                 <p>还没有账号存档</p>
-                <span>客户端登录后会自动出现在这里</span>
+                <span>登录客户端后会自动导入当前账号</span>
                 <button className="btn sm" onClick={() => void handleOpenClient()}>
                   打开客户端
                 </button>

@@ -228,8 +228,19 @@ POST {endpoint}/v2/billing/meter/daily-checkin
 | 附件 | `~/.workbuddy/blobs/` |
 | 凭据 | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
 | 主密钥槽 | `~/.workbuddy/keyblob` |
-| 账号库（复用） | `~/.dsh/workbuddy-accounts/<uid>.json` |
+| 账号库（hub 自己的） | `~/.workbuddy-hub/accounts/<uid>.json` |
 | hub 自己的状态 | `~/.workbuddy-hub/`（归属表、冷却表、签到记录、备份） |
+
+### 账号库
+
+账号库在 `~/.workbuddy-hub/accounts/<uid>.json`，由 hub 自己维护：
+
+- 客户端登录一个账号，后台每 10 秒比对凭据文件的 mtime，变化就把 `auth` 里的令牌
+  原样（可能是 `$wbEncrypted` 信封）连同 uid 存一份；
+- 同一账号再次登录、令牌刷新时覆盖旧存档，内容相同则不落盘；
+- 存进账号库的令牌不解密、不打印；切号时用 at-rest 密钥重新封装后写回客户端。
+
+因此新机器不再需要任何外部账号库：在客户端登录过的账号会自动出现在 hub 里。
 
 ### 凭据文件
 
@@ -300,7 +311,7 @@ hub authhash
 
 本地只有**当前登录账号**的资料：客户端凭据文件里的 `account.nickname` 和
 `account.phoneNumber` 都是加密字段，能用同一把 at-rest 密钥解开；其余账号在
-`~/.dsh/workbuddy-accounts/` 里只有 uid。
+`~/.workbuddy-hub/accounts/` 里只有 uid。
 
 要拿到全部账号的手机号，用各账号自己的 token 打账号接口：
 

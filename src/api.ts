@@ -259,6 +259,11 @@ const MOCK_AUTH: AuthState = {
   reason: null,
 };
 
+export async function syncCurrentAccount(): Promise<string | null> {
+  if (!isTauri) return null;
+  return invoke<string | null>('sync_current_account');
+}
+
 export async function authState(): Promise<AuthState> {
   if (!isTauri) return MOCK_AUTH;
   return invoke<AuthState>('auth_state');
