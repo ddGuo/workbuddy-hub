@@ -2,6 +2,8 @@
 
 [简体中文](README.md) | **English**
 
+**[Download the installer](https://github.com/ddGuo/workbuddy-hub/releases/latest)** (Windows 10 1803+)
+
 Gathers the tasks scattered across multiple WorkBuddy accounts into one list, and switches the
 account the official client is signed into with a single click. It also takes over the daily
 check-in you would otherwise click through account by account.
@@ -68,14 +70,18 @@ so unification rewrites that field. Original ownership is stored in
 
 ### Install
 
-```
-src-tauri/target/release/bundle/nsis/WorkBuddy Hub_0.1.0_x64-setup.exe   (2.87 MB)
-```
+Download `WorkBuddy Hub_x.y.z_x64-setup.exe` from
+[Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) and run it. There is also a
+portable `workbuddy-hub.exe` (frontend embedded in the binary).
 
-Or run `src-tauri/target/release/workbuddy-hub.exe` directly — the frontend is embedded in the binary.
+> The installer is not code-signed, so SmartScreen may warn you: "More info → Run anyway".
+> If you prefer, build it yourself — see below.
 
 Launch it from the **Start menu or a desktop shortcut** the first time. It then lives in the tray;
 clicking the icon again only brings the existing window to the front.
+
+Pushing a `v*` tag builds and publishes a release automatically
+(`.github/workflows/release.yml`) — no local packaging or manual upload.
 
 ### Requirements
 

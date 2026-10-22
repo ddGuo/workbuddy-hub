@@ -2,6 +2,8 @@
 
 **简体中文** | [English](README.en.md)
 
+**[下载安装包](https://github.com/ddGuo/workbuddy-hub/releases/latest)**（Windows 10 1803+）
+
 把散落在多个 WorkBuddy 账号里的任务收拢成一个列表，需要时一键切换客户端登录的账号；
 顺带接管每天要手动点一遍的签到。
 
@@ -65,14 +67,18 @@ hub 在切号时会把已有会话的归属改到新账号，于是：
 
 ### 安装
 
-```
-src-tauri/target/release/bundle/nsis/WorkBuddy Hub_0.1.0_x64-setup.exe   (2.87 MB)
-```
+从 [Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) 下载
+`WorkBuddy Hub_x.y.z_x64-setup.exe` 双击安装；也可以下 `workbuddy-hub.exe`
+（免安装，前端已嵌进二进制）。
 
-也可以直接跑 `src-tauri/target/release/workbuddy-hub.exe`（免安装，前端已嵌进二进制）。
+> 安装包没有代码签名，Windows SmartScreen 可能拦一下：点「更多信息 → 仍要运行」。
+> 介意的话可以从源码构建，见下文。
 
 装完从**开始菜单或桌面快捷方式**启动。启动一次之后常驻托盘，
 以后重复点图标只会把已有窗口叫到前台，不会开出第二个实例。
+
+推送 `v*` 标签会自动构建并发布新版本（`.github/workflows/release.yml`），
+不需要本地打包再手动上传。
 
 ### 环境要求
 
