@@ -1,6 +1,6 @@
 use hub_core::{
-    account_store, auth_crypto::AtRestKey, checkin, client_compat, daemon, profile, rate_limit,
-    switch_engine, task_index, task_unify, transcript,
+    account_store, auth_crypto::AtRestKey, checkin, client_compat, credit, daemon, profile,
+    rate_limit, switch_engine, task_index, task_unify, transcript,
 };
 use serde::Serialize;
 use std::process::Command;
@@ -460,6 +460,71 @@ fn run_checkins(
     result
 }
 
+fn credits_store_path() -> Result<std::path::PathBuf, String> {
+    let hub = client_compat::hub_dir().map_err(|e| e.to_string())?;
+    Ok(hub.join("credits.json"))
+}
+
+/// 剩余积分缓存（只读本地文件）。
+#[tauri::command]
+fn credits_overview() -> Result<credit::CreditStore, String> {
+    Ok(credit::CreditStore::load(&credits_store_path()?))
+}
+
+/// 拉取各账号剩余积分。`uid` 为空时处理全部账号。
+#[tauri::command]
+async fn credits_refresh(
+    app: tauri::AppHandle,
+    uid: Option<String>,
+) -> Result<credit::CreditStore, String> {
+    on_blocking(move || credits_refresh_blocking(Some(&app), uid)).await
+}
+
+fn credits_refresh_blocking(
+    app: Option<&tauri::AppHandle>,
+    only: Option<String>,
+) -> Result<credit::CreditStore, String> {
+    use tauri::Emitter;
+
+    let path = credits_store_path()?;
+    let mut store = credit::CreditStore::load(&path);
+
+    let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
+    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    let key = AtRestKey::from_secret(&secret);
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
+    let now = hub_core::now_secs();
+
+    for a in &accounts {
+        if let Some(f) = only.as_deref() {
+            if !a.uid.starts_with(f) {
+                continue;
+            }
+        }
+        if a.refresh_expires_at <= now {
+            continue;
+        }
+        let Ok(token) = a.access_token(&key) else {
+            continue;
+        };
+        let creds = checkin::Credentials {
+            token: &token,
+            uid: &a.uid,
+            domain: &a.domain,
+        };
+        if let Ok(summary) = credit::fetch(&creds) {
+            store.credits.insert(a.uid.clone(), summary);
+        }
+    }
+
+    store.save(&path).map_err(|e| e.to_string())?;
+    if let Some(app) = app {
+        let _ = app.emit("credits-updated", &store);
+    }
+    Ok(store)
+}
+
 /// 今日签到概览（只读本地记录，不发请求）。
 #[tauri::command]
 fn checkin_overview() -> Result<checkin::CheckinStore, String> {
@@ -813,6 +878,18 @@ pub fn run() {
                 });
             }
 
+            // 剩余积分：启动 25 秒后拉一次，之后每 10 分钟刷新
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(25));
+                    loop {
+                        let _ = credits_refresh_blocking(Some(&handle), None);
+                        std::thread::sleep(std::time::Duration::from_secs(600));
+                    }
+                });
+            }
+
             // 客户端登录新账号时自动存档：轮询凭据文件的 mtime，
             // 变化就把它写进 hub 自己的账号库，并通知前端刷新列表。
             {
@@ -900,6 +977,8 @@ pub fn run() {
             autostart_get,
             autostart_set,
             checkin_overview,
+            credits_overview,
+            credits_refresh,
             checkin_run,
             checkin_set_auto,
             profiles_overview,

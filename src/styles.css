@@ -533,6 +533,10 @@ input {
   height: 14px;
 }
 
+.credits.low {
+  color: var(--err);
+}
+
 .credits {
   color: var(--ink-2);
   font-family: var(--mono);

@@ -158,6 +158,11 @@ pub fn status(c: &Credentials) -> Result<CheckinStatus> {
     })
 }
 
+/// 原始状态响应。字段含义不确定时用它核对，CLI 的 `--raw` 走这里。
+pub fn status_raw(c: &Credentials) -> Result<serde_json::Value> {
+    post(c, "/v2/billing/meter/checkin-activity-status")
+}
+
 /// 领取今天的签到奖励。
 pub fn claim(c: &Credentials) -> Result<ClaimOutcome> {
     let v = post(c, "/v2/billing/meter/daily-checkin")?;

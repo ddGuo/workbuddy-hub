@@ -9,6 +9,7 @@
 pub mod account_store;
 pub mod auth_crypto;
 pub mod checkin;
+pub mod credit;
 pub mod client_compat;
 pub mod client_control;
 pub mod daemon;

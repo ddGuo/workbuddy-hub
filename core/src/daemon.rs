@@ -91,19 +91,38 @@ pub fn scan(
     projects_dir: &Path,
     state: &mut RuntimeState,
 ) -> Vec<LimitSignal> {
+    let now = crate::now_secs();
     let mut out = Vec::new();
-    for t in tasks.iter().filter(|t| t.status == "error") {
-        if state.handled.iter().any(|h| h == &t.id) {
+    let mut scanned = 0usize;
+
+    // 不能只看 status='error'：单模型被限流后客户端常会换模型重试成功，
+    // 任务最终是 completed，但限流确实发生过。这里扫最近 24 小时内更新的会话。
+    for t in tasks.iter() {
+        if scanned >= 60 {
+            break;
+        }
+        if now - t.updated_at > 24 * 3600 {
             continue;
         }
+        scanned += 1;
+
         let jsonl = projects_dir
             .join(encode_cwd(&t.cwd))
             .join(format!("{}.jsonl", t.id));
         if let Ok(Some(mut sig)) = rate_limit::scan_session(&jsonl, &t.id, &t.uid) {
-            // 会话正文里没有「错误发生时间」，用任务的更新时间代替：
-            // 界面据此区分「刚才被限流」和「几天前的旧记录」。
-            sig.detected_at = t.updated_at;
-            state.handled.push(t.id.clone());
+            if sig.detected_at == 0 {
+                sig.detected_at = t.updated_at;
+            }
+            // 消息太旧就不报了，避免把几天前的限流当成「现在」
+            if now - sig.detected_at > 24 * 3600 {
+                continue;
+            }
+            // 同一会话可能先后多次被限流，按「会话 + 时间」去重
+            let key = format!("{}@{}", t.id, sig.detected_at);
+            if state.handled.iter().any(|h| h == &key) {
+                continue;
+            }
+            state.handled.push(key);
             out.push(sig);
         }
     }

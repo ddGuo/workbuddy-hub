@@ -79,6 +79,8 @@ export interface LimitSignal {
   kind: 'account' | 'model';
   reset_at: number | null;
   detected_at: number;
+  /** 触发限流的模型 */
+  model?: string | null;
 }
 
 export interface TranscriptEntry {
@@ -160,4 +162,17 @@ export interface AuthState {
   current_uid: string | null;
   auth_file: string | null;
   reason: AuthReason | null;
+}
+
+export interface CreditSummary {
+  /** 剩余积分，可能带小数 */
+  remaining: number;
+  total: number;
+  packages: number;
+  updated_at: number;
+}
+
+export interface CreditStore {
+  version: number;
+  credits: Record<string, CreditSummary>;
 }

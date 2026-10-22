@@ -8,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use hub_core::account_store::{self, Account};
 use hub_core::auth_crypto::{self, AtRestKey};
 use hub_core::checkin;
+use hub_core::credit;
 use hub_core::client_compat;
 use hub_core::daemon;
 use hub_core::profile;
@@ -35,6 +36,7 @@ fn main() -> Result<()> {
         "watch" => cmd_watch(&args[1..]),
         "transcript" => cmd_transcript(&args[1..]),
         "checkin" => cmd_checkin(&args[1..]),
+        "credits" => cmd_credits(&args[1..]),
         "profile" => cmd_profile(&args[1..]),
         "authhash" => cmd_authhash(),
         "enc-test" => cmd_enc_test(),
@@ -63,7 +65,8 @@ fn print_help() {
     println!("             hub unify --status | --rollback");
     println!("  watch      限流守护：hub watch [--once] [--auto] [--interval 秒]");
     println!("  transcript 预览会话正文：hub transcript <session-id 前缀> [--tail N]");
-    println!("  checkin    每日签到：hub checkin [--status] [--force-claim] [--uid <前缀>]");
+    println!("  checkin    每日签到：hub checkin [--status] [--force-claim] [--raw] [--uid <前缀>]");
+    println!("  credits    剩余积分：hub credits [--raw] [--uid <前缀>]");
     println!("  profile    读取账号资料（昵称 / 脱敏手机号）：hub profile [--uid <前缀>]");
     println!("  authhash   输出客户端凭据的哈希，用于与 TS 实现对拍");
 }
@@ -394,10 +397,69 @@ fn cmd_profile(args: &[String]) -> Result<()> {
 }
 
 /// 每日签到：先用 --status 看一眼，再决定要不要真签。
+fn cmd_credits(args: &[String]) -> Result<()> {
+    let raw = args.iter().any(|a| a == "--raw");
+    let uid_filter = args
+        .windows(2)
+        .find(|w| w[0] == "--uid")
+        .map(|w| w[1].clone());
+
+    let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
+    let secret = client_compat::at_rest_secret(&exe)?;
+    let key = AtRestKey::from_secret(&secret);
+    let accounts = account_store::load(&client_compat::accounts_dir()?)?;
+    let now = now_secs();
+
+    println!("剩余积分");
+    for a in &accounts {
+        if let Some(f) = &uid_filter {
+            if !a.uid.starts_with(f.as_str()) {
+                continue;
+            }
+        }
+        let short = &a.uid[..a.uid.len().min(8)];
+        if a.refresh_expires_at <= now {
+            println!("  {short}  跳过：凭据已过期");
+            continue;
+        }
+        let token = match a.access_token(&key) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("  {short}  解密失败：{e:#}");
+                continue;
+            }
+        };
+        let c = checkin::Credentials {
+            token: &token,
+            uid: &a.uid,
+            domain: &a.domain,
+        };
+        if raw {
+            match credit::fetch_raw(&c) {
+                Ok(v) => println!(
+                    "  {short}  {}",
+                    serde_json::to_string_pretty(&v).unwrap_or_default()
+                ),
+                Err(e) => println!("  {short}  失败：{e:#}"),
+            }
+        } else {
+            match credit::fetch(&c) {
+                Ok(s) => println!(
+                    "  {short}  剩余 {} / 共 {}（{} 个包）",
+                    s.remaining, s.total, s.packages
+                ),
+                Err(e) => println!("  {short}  失败：{e:#}"),
+            }
+        }
+    }
+    Ok(())
+}
+
 fn cmd_checkin(args: &[String]) -> Result<()> {
     let status_only = args.iter().any(|a| a == "--status");
     // 诊断用：跳过本地判断，直接打领取接口，看服务端原始返回
     let force_claim = args.iter().any(|a| a == "--force-claim");
+    let raw = args.iter().any(|a| a == "--raw");
     let uid_filter = args
         .windows(2)
         .find(|w| w[0] == "--uid")
@@ -439,6 +501,16 @@ fn cmd_checkin(args: &[String]) -> Result<()> {
             uid: &a.uid,
             domain: &a.domain,
         };
+        if raw {
+            match checkin::status_raw(&creds) {
+                Ok(v) => println!(
+                    "  {short}  {}",
+                    serde_json::to_string_pretty(&v).unwrap_or_default()
+                ),
+                Err(e) => println!("  {short}  请求失败：{e:#}"),
+            }
+            continue;
+        }
         if force_claim {
             match checkin::claim(&creds) {
                 Ok(o) => println!(

@@ -9,6 +9,8 @@ import {
   checkinRun,
   checkinSetAuto,
   authState,
+  creditsOverview,
+  creditsRefresh,
   syncAccounts,
   describeError,
   isTauri,
@@ -36,6 +38,7 @@ import type {
   LimitSignal,
   Ownership,
   AuthState,
+  CreditStore,
   Probe,
   ProfileStore,
   SwitchPlan,
@@ -44,6 +47,10 @@ import type {
 } from './types';
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('zh-CN');
+
+/** 积分可能带小数，最多保留一位 */
+const fmtCredit = (n: number) =>
+  (Math.round(n * 10) / 10).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
 
 const STATUS_LABEL: Record<string, string> = {
   working: '进行中',
@@ -130,6 +137,7 @@ export default function App() {
   const [checkin, setCheckin] = useState<CheckinStore | null>(null);
   const [profiles, setProfiles] = useState<ProfileStore | null>(null);
   const [auth, setAuth] = useState<AuthState | null>(null);
+  const [credits, setCredits] = useState<CreditStore | null>(null);
   const [cardsOpen, setCardsOpen] = useState(
     () => localStorage.getItem('hub.cardsOpen') !== '0',
   );
@@ -171,12 +179,14 @@ export default function App() {
     });
     // 后台签到/积分刷新完成后推一次整份记录
     const un5 = listen<CheckinStore>('checkin-updated', (e) => setCheckin(e.payload));
+    const un6 = listen<CreditStore>('credits-updated', (e) => setCredits(e.payload));
     progressRef.current = () => {
       void un1.then((f) => f());
       void un2.then((f) => f());
       void un3.then((f) => f());
       void un4.then((f) => f());
       void un5.then((f) => f());
+      void un6.then((f) => f());
     };
     return () => {
       progressRef.current?.();
@@ -186,13 +196,14 @@ export default function App() {
 
   // 慢命令单独一批：首屏不等它们，失败也不影响账号和任务
   async function loadSecondary(seq: number) {
-    const [p, o, lim, auto, ck, pf] = await Promise.allSettled([
+    const [p, o, lim, auto, ck, pf, cr] = await Promise.allSettled([
       probe(),
       unifyStatus(),
       scanLimits(),
       autostartGet(),
       checkinOverview(),
       profilesOverview(),
+      creditsOverview(),
     ]);
     if (seq !== loadSeq.current) return;
     if (p.status === 'fulfilled') setInfo(p.value);
@@ -201,6 +212,7 @@ export default function App() {
     if (auto.status === 'fulfilled') setAutostart(auto.value);
     if (ck.status === 'fulfilled') setCheckin(ck.value);
     if (pf.status === 'fulfilled') setProfiles(pf.value);
+    if (cr.status === 'fulfilled') setCredits(cr.value);
   }
 
   async function load() {
@@ -354,6 +366,8 @@ export default function App() {
     try {
       const store = await checkinRun();
       setCheckin(store);
+      // 签到可能改变剩余积分，顺手刷新一次
+      void creditsRefresh().then(setCredits).catch(() => {});
       setToast({ kind: 'ok', text: store.last_summary || '签到完成' });
     } catch (e) {
       setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
@@ -749,6 +763,7 @@ export default function App() {
                 const ck = checkin?.records?.[a.uid];
                 const fresh = ck && ck.date === today;
                 const expiredAcct = isExpired(a);
+                const cr = credits?.credits?.[a.uid];
                 const blocked = switchBlockReason(a);
                 return (
                   <div
@@ -796,11 +811,14 @@ export default function App() {
                         ) : (
                           <span>{fmtDate(a.refresh_expires_at)} 到期</span>
                         )}
-                        {ck && ck.total_credits >= 0 && (
+                        {cr && (
                           <>
                             <span className="sep">·</span>
-                            <span className="credits" title="剩余积分">
-                              {fmtInt(ck.total_credits)} 积分
+                            <span
+                              className={`credits ${cr.remaining < 100 ? 'low' : ''}`}
+                              title={`剩余积分（总额 ${fmtInt(cr.total)}）`}
+                            >
+                              {fmtCredit(cr.remaining)} 积分
                             </span>
                           </>
                         )}
@@ -978,7 +996,8 @@ export default function App() {
                     <b>检测到限流</b>
                     <span>
                       账号 <code>{labelOf(activeLimit.uid)}</code> ·{' '}
-                      {activeLimit.kind === 'account' ? '账号额度' : '单模型'} ·{' '}
+                      {activeLimit.kind === 'account' ? '账号额度' : '单模型'}
+                      {activeLimit.model ? ` · ${activeLimit.model}` : ''} ·{' '}
                       {activeLimit.reset_at
                         ? activeLimit.reset_at > Date.now() / 1000
                           ? `冷却至 ${fmtTime(activeLimit.reset_at)}`

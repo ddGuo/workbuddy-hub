@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   AccountSummary,
   AuthState,
+  CreditStore,
   CheckinRecord,
   CheckinStore,
   LimitSignal,
@@ -152,6 +153,7 @@ export async function scanLimits(): Promise<LimitSignal[]> {
         kind: 'model',
         reset_at: Math.floor(Date.now() / 1000) + 1800,
         detected_at: Math.floor(Date.now() / 1000) - 120,
+        model: 'glm-5.2',
       },
     ];
   }
@@ -291,6 +293,31 @@ export function describeError(e: unknown): {
     return { code: 'expired', text: raw.slice(ERR_EXPIRED.length) };
   }
   return { code: null, text: raw };
+}
+
+const MOCK_CREDITS: CreditStore = {
+  version: 1,
+  credits: {
+    '128a8f9c-9167-46e5-86e7-a61fa5e766ce': { remaining: 2910.9, total: 3400, packages: 3, updated_at: 0 },
+    '438b979e-2c4f-4b21-983c-d2e0081ce5b5': { remaining: 640, total: 1000, packages: 2, updated_at: 0 },
+    '4dba68a4-797f-4a97-a7e0-a23b261a3d48': { remaining: 0, total: 500, packages: 1, updated_at: 0 },
+    '697af213-6a63-4edb-ad9c-1ff588ee434d': { remaining: 1520, total: 2000, packages: 2, updated_at: 0 },
+    '70859058-c2c9-4c42-a463-2b773aa953bb': { remaining: 860, total: 1500, packages: 2, updated_at: 0 },
+    '8bc5fd09-3730-4a8a-9182-6dadb2a1b058': { remaining: 3240, total: 4000, packages: 3, updated_at: 0 },
+    'd0925912-43cb-466c-98a6-d06c7d86e8ad': { remaining: 1180, total: 1500, packages: 1, updated_at: 0 },
+    'db0427fd-b175-497c-85a0-c01d8f35cb13': { remaining: 45.6, total: 500, packages: 1, updated_at: 0 },
+    'edef9155-d7fc-473d-9684-525b5987a911': { remaining: 2100, total: 3000, packages: 2, updated_at: 0 },
+  },
+};
+
+export async function creditsOverview(): Promise<CreditStore> {
+  if (!isTauri) return MOCK_CREDITS;
+  return invoke<CreditStore>('credits_overview');
+}
+
+export async function creditsRefresh(uid?: string): Promise<CreditStore> {
+  if (!isTauri) return MOCK_CREDITS;
+  return invoke<CreditStore>('credits_refresh', { uid: uid ?? null });
 }
 
 export async function checkinSetAuto(enabled: boolean): Promise<CheckinStore> {

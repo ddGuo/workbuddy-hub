@@ -36,10 +36,13 @@ pub struct LimitSignal {
     pub kind: LimitKind,
     /// 上游给出的恢复时间（unix 秒）；没有则为 None
     pub reset_at: Option<i64>,
-    /// 这条错误发生在什么时候（unix 秒）。由调用方按任务更新时间补齐，
-    /// 界面据此判断「是刚才被限流」还是「三天前的旧错误」。
+    /// 这条错误发生在什么时候（unix 秒）。优先取消息自身的 timestamp，
+    /// 没有时由调用方用任务更新时间补齐。
     #[serde(default)]
     pub detected_at: i64,
+    /// 触发限流的模型（`providerData.model`）
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl LimitSignal {
@@ -60,31 +63,62 @@ impl LimitSignal {
 }
 
 /// 从一段文本里识别限流。
+///
+/// 只认**上游错误原文**，不做关键词泛匹配：助手正常聊天时也可能出现
+/// 「限流」二字（例如解释这个功能），把那种句子当限流会误报。
 pub fn classify(text: &str) -> Option<(LimitKind, Option<i64>)> {
-    let lower = text.to_lowercase();
-
-    let is_429 = text.contains("429") || lower.contains("too many requests");
-    let hk_credit = text.contains("积分不足")
-        || text.contains("额度不足")
-        || text.contains("使用量已超出")
-        || lower.contains("quota exceeded")
-        || lower.contains("insufficient credit");
-    let hk_rate = text.contains("频率限制") || text.contains("限流") || lower.contains("rate limit");
-
-    if !(is_429 || hk_credit || hk_rate) {
+    // 上游错误都是短提示；长回复里可能引用错误原文，不能整段当成限流
+    if text.chars().count() > 300 {
         return None;
     }
 
-    // 「您也可以切换其他模型继续使用」说明只是当前模型被限，账号还有额度
-    let kind = if text.contains("切换其他模型") || text.contains("切换模型") {
+    let lower = text.to_lowercase();
+    let head = text.trim_start();
+
+    // 必须像一条错误开头：`429 您的…` / `429：…`；
+    // 代码里的行号（`429→`）或长数字不能算
+    let is_429 = starts_with_status(head, "429")
+        || starts_with_status(head, "402")
+        || lower.starts_with("http 429")
+        || lower.starts_with("http 402");
+    let credit = text.contains("使用量已超出")
+        || text.contains("积分不足")
+        || text.contains("额度不足")
+        || lower.contains("quota exceeded")
+        || lower.contains("insufficient credit");
+    let rate = text.contains("频率限制")
+        || text.contains("请求过于频繁")
+        || text.contains("模型已限流")
+        || text.contains("模型限流")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("overloaded_error");
+    // 「可以切换其他模型」是模型级的强特征：正常解释功能时不会整句这么写
+    let model_hint = text.contains("切换其他模型") || text.contains("切换模型继续");
+
+    if !(is_429 || credit || rate || model_hint) {
+        return None;
+    }
+
+    let kind = if model_hint {
         LimitKind::Model
-    } else if hk_credit || text.contains("积分") || text.contains("额度") {
+    } else if credit {
         LimitKind::Account
     } else {
         LimitKind::Model
     };
 
     Some((kind, parse_reset_time(text)))
+}
+
+fn starts_with_status(text: &str, code: &str) -> bool {
+    let Some(rest) = text.strip_prefix(code) else {
+        return false;
+    };
+    match rest.chars().next() {
+        None => true,
+        Some(c) => c.is_whitespace() || matches!(c, '：' | ':' | '，' | ',') || (c as u32) > 0x2E80,
+    }
 }
 
 /// 解析「将在 2026-10-19 09:56:23 UTC+8 重置」里的时间。
@@ -153,7 +187,9 @@ pub fn scan_session(jsonl: &Path, session_id: &str, uid: &str) -> Result<Option<
     }
     let text = read_tail(jsonl, 256 * 1024)?;
 
-    // 从后往前找第一条带限流特征的 assistant 消息
+    // 从后往前找**最近一条**带限流特征的 assistant 消息。
+    // 不能只看最后一条：客户端被限流后常会换模型重试，最后一条是成功回复，
+    // 限流提示被夹在中间，只看最后一条就会漏记。
     for line in text.lines().rev() {
         if line.trim().is_empty() {
             continue;
@@ -181,17 +217,26 @@ pub fn scan_session(jsonl: &Path, session_id: &str, uid: &str) -> Result<Option<
             continue;
         }
         if let Some((kind, reset_at)) = classify(&collected) {
+            let detected_at = v
+                .get("timestamp")
+                .and_then(serde_json::Value::as_i64)
+                .map(crate::normalize_ts)
+                .unwrap_or(0);
+            let model = v
+                .get("providerData")
+                .and_then(|p| p.get("model"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string);
             return Ok(Some(LimitSignal {
                 session_id: session_id.to_string(),
                 uid: uid.to_string(),
                 message: truncate(&collected, 200),
                 kind,
                 reset_at,
-                detected_at: 0,
+                detected_at,
+                model,
             }));
         }
-        // 只看最后一条 assistant 消息：如果它不是限流，说明这次失败另有原因
-        return Ok(None);
     }
     Ok(None)
 }
@@ -233,6 +278,47 @@ mod tests {
     }
 
     #[test]
+    fn ignores_chatter_and_code_mentioning_limits() {
+        // 助手解释这个功能时的正常句子，不能当成限流
+        assert!(classify("积分与限流展示都对了，用真实数据再验一次").is_none());
+        assert!(classify("刚才被限流了，换了个模型").is_none());
+        // 代码里出现的行号 429
+        assert!(classify("429→    const isMoreAccurate = accuracyDelta < 0").is_none());
+        // 真正的错误原文仍然识别
+        assert!(classify(REAL).is_some());
+    }
+
+    #[test]
+    fn finds_limit_before_final_success() {
+        let dir = std::env::temp_dir().join(format!("hub-rl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("s.jsonl");
+        let lines = [
+            serde_json::json!({
+                "role": "assistant",
+                "timestamp": 1_792_374_000_000_i64,
+                "content": [{ "type": "output_text", "text": REAL }],
+                "providerData": { "model": "glm-5.2" }
+            })
+            .to_string(),
+            serde_json::json!({
+                "role": "assistant",
+                "timestamp": 1_792_374_100_000_i64,
+                "content": [{ "type": "output_text", "text": "已换模型完成" }]
+            })
+            .to_string(),
+        ];
+        std::fs::write(&file, lines.join("\n")).unwrap();
+
+        let sig = scan_session(&file, "s", "u").unwrap().expect("应找到限流");
+        assert_eq!(sig.kind, LimitKind::Model);
+        assert_eq!(sig.model.as_deref(), Some("glm-5.2"));
+        assert_eq!(sig.detected_at, 1_792_374_000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn datetime_roundtrip() {
         let ts = parse_utc8_datetime("2026-10-19 09:56:23").unwrap();
         assert_eq!(ts, 1792374983);
@@ -249,6 +335,7 @@ mod tests {
             kind: LimitKind::Model,
             reset_at: Some(2_000_000_000),
             detected_at: 0,
+            model: Some("glm-5.2".into()),
         };
         assert_eq!(s.cooldown_until(1_900_000_000, 0), 2_000_000_000);
         // 重置时间已过 → 退避

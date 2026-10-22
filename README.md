@@ -173,6 +173,11 @@ hub watch                 # 持续监控，只报告
 hub watch --auto          # 发现限流就换号（有任务在跑时自动跳过）
 ```
 
+扫描范围是最近 24 小时内更新过的会话，**不限于 `status='error'`**：模型被限流后客户端
+常会换模型重试成功，任务最终是 completed，限流原文夹在对话中间 —— 只看失败任务会漏记。
+判定只认上游错误原文（`429 您的使用量…`、`频率限制`、`切换其他模型` 等），
+助手正常聊到「限流」不会误报。
+
 两个安全阀：**有任务在跑就不切**（重启会全打断），**冷却表持久化**
 （同一账号不会因同一条错误被反复切走）。
 
@@ -217,7 +222,11 @@ Authorization: Bearer <accessToken> · X-User-Id · X-Domain
 | 失败账号 6 小时内不重试 | 凭据失效的账号不该被反复锤；手动签到不受限 |
 | 不伪造 `X-Device-Token` | 那是客户端 Turing SDK 的反爬头；实测缺它也能查、能签 |
 
-记录写在 `~/.workbuddy-hub/checkin.json`（每账号的日期、成败、积分、连签天数）。
+记录写在 `~/.workbuddy-hub/checkin.json`（每账号的日期、成败、签到积分、连签天数）。
+
+> 注意：签到接口里的 `total_credits` 是**累计签到积分**（天数 × 每日额度），不是余额。
+> 账号列表显示的剩余积分来自 `POST {domain}/billing/meter/get-user-resource-summary`
+> 的 `TotalCredits`，每 10 分钟刷新一次，缓存在 `~/.workbuddy-hub/credits.json`。
 默认自动开启，可随时关掉或点「立即签到」。
 
 一个实测细节：服务端把「今天已经领过」返回成 **HTTP 400**（`今天已签到，请明天再来`），
