@@ -1,3 +1,5 @@
+<img src="src-tauri/icons/128x128.png" width="72" height="72" alt="WorkBuddy Hub">
+
 # workbuddy-hub
 
 **简体中文** | [English](README.en.md)
@@ -68,7 +70,7 @@ hub 在切号时会把已有会话的归属改到新账号，于是：
 ### 安装
 
 从 [Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) 下载
-`WorkBuddy.Hub_0.1.0_x64-setup.exe` 双击安装；也可以下 `workbuddy-hub.exe`
+`WorkBuddy.Hub_<版本>_x64-setup.exe` 双击安装；也可以下 `workbuddy-hub.exe`
 （免安装，前端已嵌进二进制）。
 
 想直接发给别人，用这个固定链接（永远指向最新版）：

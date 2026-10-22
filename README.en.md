@@ -1,3 +1,5 @@
+<img src="src-tauri/icons/128x128.png" width="72" height="72" alt="WorkBuddy Hub">
+
 # workbuddy-hub
 
 [简体中文](README.md) | **English**
@@ -70,7 +72,7 @@ so unification rewrites that field. Original ownership is stored in
 
 ### Install
 
-Download `WorkBuddy.Hub_0.1.0_x64-setup.exe` from
+Download `WorkBuddy.Hub_<版本>_x64-setup.exe` from
 [Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) and run it. There is also a
 portable `workbuddy-hub.exe` (frontend embedded in the binary).
 

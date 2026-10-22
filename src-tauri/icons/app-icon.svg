@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="90" x2="890" y2="950" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4F5BFF"/>
+      <stop offset="0.55" stop-color="#7A5CFF"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="512" y1="60" x2="512" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="shade" x1="512" y1="620" x2="512" y2="980" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.18"/>
+    </linearGradient>
+    <clipPath id="tile"><rect x="64" y="64" width="896" height="896" rx="224"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect x="64" y="64" width="896" height="896" fill="url(#bg)"/>
+    <rect x="64" y="64" width="896" height="896" fill="url(#gloss)"/>
+    <rect x="64" y="64" width="896" height="896" fill="url(#shade)"/>
+  </g>
+  <rect x="65" y="65" width="894" height="894" rx="223" fill="none" stroke="#fff" stroke-opacity="0.16" stroke-width="2"/>
+  <g stroke="#fff" fill="none" stroke-width="78" stroke-linecap="round">
+    <path d="M418 330h312"/>
+    <path d="M418 512h192"/>
+    <path d="M418 694h252"/>
+  </g>
+  <circle cx="310" cy="330" r="54" fill="#fff"/>
+  <circle cx="310" cy="512" r="54" fill="#fff"/>
+  <circle cx="310" cy="694" r="54" fill="#fff"/>
+</svg>
