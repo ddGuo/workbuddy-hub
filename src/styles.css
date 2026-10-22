@@ -163,18 +163,13 @@ input {
 .mark {
   width: 28px;
   height: 28px;
-  border-radius: 9px;
-  background: linear-gradient(140deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink);
-  display: grid;
-  place-items: center;
-  box-shadow: 0 5px 14px rgba(124, 140, 248, 0.26);
+  display: block;
+  border-radius: 7px;
   flex-shrink: 0;
-}
-
-.mark svg {
-  width: 15px;
-  height: 15px;
+  /* PNG 自带圆角与透明角，阴影跟着 alpha 走 */
+  filter: drop-shadow(0 4px 10px rgba(124, 140, 248, 0.3));
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .brand h1 {

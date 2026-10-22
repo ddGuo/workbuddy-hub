@@ -24,6 +24,8 @@ import {
   unifyRollback,
   unifyStatus,
 } from './api';
+import { version as appVersion } from '../package.json';
+import appIcon from './assets/app-icon.png';
 import { applyTheme, loadThemeMode, saveThemeMode, type ThemeMode } from './theme';
 import type {
   Account,
@@ -489,19 +491,10 @@ export default function App() {
         onDoubleClick={onTitlebarDoubleClick}
       >
         <div className="brand" data-tauri-drag-region>
-          <span className="mark">
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M4 6h16M4 12h10M4 18h13"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-              />
-            </svg>
-          </span>
+          <img className="mark" src={appIcon} width={28} height={28} alt="" draggable={false} />
           <h1 data-tauri-drag-region>WorkBuddy Hub</h1>
           <span className="version" data-tauri-drag-region>
-            v0.1.0
+            v{appVersion}
           </span>
           {!isTauri && <span className="mock">示例数据</span>}
         </div>
