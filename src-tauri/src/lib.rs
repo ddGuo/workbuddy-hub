@@ -930,14 +930,25 @@ pub fn run() {
                 });
             }
 
-            // 剩余积分：启动 25 秒后拉一次，之后每 10 分钟刷新
+            // 剩余积分：当前账号每 30 秒刷新（余额随使用变化），
+            // 其余账号每 10 分钟全量刷新一次。
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(25));
+                    let mut last_full = 0i64;
                     loop {
-                        let _ = credits_refresh_blocking(Some(&handle), None);
-                        std::thread::sleep(std::time::Duration::from_secs(600));
+                        let now = hub_core::now_secs();
+                        if let Some(auth) = client_compat::auth_file() {
+                            if let Ok(Some(seen)) = auth_seen::refresh(&auth) {
+                                let _ = credits_refresh_blocking(Some(&handle), Some(seen.uid));
+                            }
+                        }
+                        if now - last_full >= 600 {
+                            let _ = credits_refresh_blocking(Some(&handle), None);
+                            last_full = now;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(30));
                     }
                 });
             }

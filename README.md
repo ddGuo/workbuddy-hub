@@ -233,7 +233,7 @@ Authorization: Bearer <accessToken> · X-User-Id · X-Domain
 
 > 注意：签到接口里的 `total_credits` 是**累计签到积分**（天数 × 每日额度），不是余额。
 > 账号列表显示的剩余积分来自 `POST {domain}/billing/meter/get-user-resource-summary`
-> 的 `TotalCredits`，每 10 分钟刷新一次，缓存在 `~/.workbuddy-hub/credits.json`。
+> 的 `TotalCredits`，当前账号每 30 秒刷新一次，其余账号每 10 分钟；缓存在 `~/.workbuddy-hub/credits.json`。
 默认自动开启，可随时关掉或点「立即签到」。
 
 一个实测细节：服务端把「今天已经领过」返回成 **HTTP 400**（`今天已签到，请明天再来`），

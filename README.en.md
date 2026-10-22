@@ -244,8 +244,8 @@ State lives in `~/.workbuddy-hub/checkin.json` (date, result, check-in points, s
 
 > The check-in API's `total_credits` is **cumulative check-in points**, not a balance. The
 > remaining credits shown in the account list come from
-> `POST {domain}/billing/meter/get-user-resource-summary` (`TotalCredits`), refreshed every
-> 10 minutes and cached in `~/.workbuddy-hub/credits.json`.
+> `POST {domain}/billing/meter/get-user-resource-summary` (`TotalCredits`), refreshed every 30 seconds for the
+> current account (10 minutes for the rest) and cached in `~/.workbuddy-hub/credits.json`.
 Enabled by default; turn it off or hit "Check in now" at any time.
 
 One measured detail: the server reports "already claimed today" as **HTTP 400**
