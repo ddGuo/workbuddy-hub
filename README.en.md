@@ -226,6 +226,10 @@ Authorization: Bearer <accessToken> · X-User-Id · X-Domain
 State lives in `~/.workbuddy-hub/checkin.json` (date, result, credits, streak per account).
 Enabled by default; turn it off or hit "Check in now" at any time.
 
+One measured detail: the server reports "already claimed today" as **HTTP 400**
+(`今天已签到，请明天再来`), not 200 with a business code. hub classifies it as `already`,
+so a race with the official client never shows up as a failure.
+
 ```bash
 hub checkin --status          # inspect only
 hub checkin                   # claim for every account
@@ -286,7 +290,7 @@ hub switch --to 697af213  # switch (dry run by default, --force to write)
 hub unify [--force|--status|--rollback]
 hub watch [--once|--auto]
 hub transcript <id>       # preview a conversation (--tail N)
-hub checkin [--status]    # daily check-in
+hub checkin [--status] [--force-claim]   # daily check-in (--force-claim hits the claim API for diagnosis)
 hub profile               # masked phone numbers and nicknames
 hub authhash              # credential hashes, for parity checks against the TS implementation
 ```

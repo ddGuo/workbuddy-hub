@@ -163,7 +163,15 @@ pub fn claim(c: &Credentials) -> Result<ClaimOutcome> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        credit: int(&data, "credit"),
+        // 成功响应里积分字段名不完全确定，按常见命名回退
+        credit: {
+            let c = int(&data, "credit");
+            if c > 0 {
+                c
+            } else {
+                int(&data, "daily_credit")
+            }
+        },
         streak_days: int(&data, "streak_days"),
     })
 }
@@ -223,10 +231,25 @@ pub fn check_and_claim(c: &Credentials, today: &str) -> CheckinRecord {
             rec
         }
         Err(e) => {
-            rec.message = format!("{e:#}");
+            let msg = format!("{e:#}");
+            // 服务端把「今天已领过」做成 HTTP 400，和真正的失败要分开
+            if is_already_claimed(&msg) {
+                rec.state = "already".into();
+                rec.credit = st.today_credit;
+                rec.message = format!("今天已签到 · 连签 {} 天", st.streak_days);
+            } else {
+                rec.message = msg;
+            }
             rec
         }
     }
+}
+
+/// 服务端用它表示「今天已经领过」，属于正常状态而不是错误。
+fn is_already_claimed(msg: &str) -> bool {
+    ["已签到", "明天再来", "已经签到", "already"]
+        .iter()
+        .any(|k| msg.contains(k))
 }
 
 fn int(v: &Value, key: &str) -> i64 {
@@ -311,6 +334,14 @@ mod tests {
             },
         );
         assert_eq!(s.today_progress("2026-10-22"), (1, 2));
+    }
+
+    #[test]
+    fn detects_already_claimed() {
+        assert!(is_already_claimed("HTTP 400 · 今天已签到，请明天再来"));
+        assert!(is_already_claimed("already checked in"));
+        assert!(!is_already_claimed("HTTP 401 · 登录已失效"));
+        assert!(!is_already_claimed("HTTP 500 · internal error"));
     }
 
     #[test]

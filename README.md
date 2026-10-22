@@ -218,6 +218,9 @@ Authorization: Bearer <accessToken> · X-User-Id · X-Domain
 记录写在 `~/.workbuddy-hub/checkin.json`（每账号的日期、成败、积分、连签天数）。
 默认自动开启，可随时关掉或点「立即签到」。
 
+一个实测细节：服务端把「今天已经领过」返回成 **HTTP 400**（`今天已签到，请明天再来`），
+不是 200 + 业务码。hub 会把它归类成「已签」，所以并发抢签时也不会在界面上显示成失败。
+
 ```bash
 hub checkin --status          # 只看，不领
 hub checkin                   # 逐账号领取
@@ -272,7 +275,7 @@ hub switch --to 697af213  # 切号（默认演练，--force 才写文件）
 hub unify [--force|--status|--rollback]
 hub watch [--once|--auto]
 hub transcript <id>       # 预览会话正文（--tail N 控制条数）
-hub checkin [--status]    # 每日签到
+hub checkin [--status] [--force-claim]   # 每日签到（--force-claim 直接打领取接口，用于诊断）
 hub authhash              # 输出凭据哈希，用于与 TS 实现对拍
 ```
 

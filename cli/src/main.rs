@@ -63,7 +63,7 @@ fn print_help() {
     println!("             hub unify --status | --rollback");
     println!("  watch      限流守护：hub watch [--once] [--auto] [--interval 秒]");
     println!("  transcript 预览会话正文：hub transcript <session-id 前缀> [--tail N]");
-    println!("  checkin    每日签到：hub checkin [--status] [--uid <前缀>]");
+    println!("  checkin    每日签到：hub checkin [--status] [--force-claim] [--uid <前缀>]");
     println!("  profile    读取账号资料（昵称 / 脱敏手机号）：hub profile [--uid <前缀>]");
     println!("  authhash   输出客户端凭据的哈希，用于与 TS 实现对拍");
 }
@@ -396,6 +396,8 @@ fn cmd_profile(args: &[String]) -> Result<()> {
 /// 每日签到：先用 --status 看一眼，再决定要不要真签。
 fn cmd_checkin(args: &[String]) -> Result<()> {
     let status_only = args.iter().any(|a| a == "--status");
+    // 诊断用：跳过本地判断，直接打领取接口，看服务端原始返回
+    let force_claim = args.iter().any(|a| a == "--force-claim");
     let uid_filter = args
         .windows(2)
         .find(|w| w[0] == "--uid")
@@ -437,6 +439,16 @@ fn cmd_checkin(args: &[String]) -> Result<()> {
             uid: &a.uid,
             domain: &a.domain,
         };
+        if force_claim {
+            match checkin::claim(&creds) {
+                Ok(o) => println!(
+                    "  {short}  code={} credit={} streak={} msg={}",
+                    o.code, o.credit, o.streak_days, o.msg
+                ),
+                Err(e) => println!("  {short}  请求失败：{e:#}"),
+            }
+            continue;
+        }
         if status_only {
             match checkin::status(&creds) {
                 Ok(st) => println!(

@@ -196,6 +196,7 @@ POST {endpoint}/v2/billing/meter/daily-checkin
 |---|---|---|
 | 领取成功 | `claimed` | 签到成功 · +N 积分 |
 | 今天已经签过 | `already` | 今天已签到 · 连签 N 天 |
+| HTTP 400「今天已签到，请明天再来」 | `already` | 同上（重复领取是正常状态，不算失败） |
 | 活动没开 | `inactive` | 签到活动未开启 |
 | 网络 / 鉴权 / 服务端拒绝 | `error` | 具体原因（HTTP 码 + 服务端 msg） |
 
