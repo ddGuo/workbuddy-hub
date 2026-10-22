@@ -122,6 +122,8 @@ export interface CheckinRecord {
   state: CheckinState;
   credit: number;
   streak_days: number;
+  /** 剩余积分；-1 表示还没拉到 */
+  total_credits: number;
   message: string;
   updated_at: number;
 }

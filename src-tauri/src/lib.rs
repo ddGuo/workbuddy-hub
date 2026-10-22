@@ -6,6 +6,13 @@ use serde::Serialize;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// `sync_accounts` 的返回：当前账号 uid，以及从旧版 DSH 导入了几条。
+#[derive(Serialize)]
+pub struct SyncAccountsOut {
+    current: Option<String>,
+    imported: usize,
+}
+
 #[derive(Serialize)]
 pub struct ProbeOut {
     exe: Option<String>,
@@ -127,14 +134,19 @@ fn db_path() -> Result<std::path::PathBuf, String> {
     Ok(root.join("workbuddy.db"))
 }
 
-/// 把客户端当前登录的账号同步进 hub 的账号库。
+/// 同步账号库：把客户端当前登录的账号存一份，并把旧版 DSH 里没有的存档导进来。
 #[tauri::command]
-fn sync_current_account() -> Result<Option<String>, String> {
-    let Some(auth) = client_compat::auth_file() else {
-        return Ok(None);
-    };
+fn sync_accounts() -> Result<SyncAccountsOut, String> {
     let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
-    account_store::save_current(&auth, &dir).map_err(|e| e.to_string())
+    let current = match client_compat::auth_file() {
+        Some(auth) => account_store::save_current(&auth, &dir).map_err(|e| e.to_string())?,
+        None => None,
+    };
+    let imported = match client_compat::legacy_accounts_dir() {
+        Ok(dsh) => account_store::import_from_dsh(&dsh, &dir).map_err(|e| e.to_string())?,
+        Err(_) => 0,
+    };
+    Ok(SyncAccountsOut { current, imported })
 }
 
 #[tauri::command]
@@ -378,17 +390,9 @@ fn run_checkins(
                     continue;
                 }
             }
-            // 今天已经有结论的账号不再请求
+            // 已签过的账号也要拉一次状态：剩余积分会随使用变化，列表要显示最新值。
+            // 只有「今天失败过」的账号在 6 小时内不重试（手动点击除外）。
             if let Some(r) = store.records.get(&a.uid) {
-                if r.date == today && matches!(r.state.as_str(), "claimed" | "already" | "inactive") {
-                    if r.state == "claimed" {
-                        claimed += 1;
-                    } else {
-                        already += 1;
-                    }
-                    continue;
-                }
-                // 失败的不反复重试：同一账号 6 小时内只试一次（手动点击除外）
                 if !force
                     && r.date == today
                     && r.state == "error"
@@ -416,6 +420,7 @@ fn run_checkins(
                             state: "error".into(),
                             credit: 0,
                             streak_days: 0,
+                            total_credits: -1,
                             message: format!("解密凭据失败：{e}"),
                             updated_at: hub_core::now_secs(),
                         },
@@ -445,6 +450,9 @@ fn run_checkins(
             format!("新签 {claimed} · 已签 {already}")
         };
         store.save(&path).map_err(|e| e.to_string())?;
+        if let Some(app) = app {
+            let _ = app.emit("checkin-updated", &store);
+        }
         Ok(store)
     })();
 
@@ -875,7 +883,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             probe,
             auth_state,
-            sync_current_account,
+            sync_accounts,
             list_tasks,
             list_accounts,
             current_uid,

@@ -137,6 +137,37 @@ pub fn save_current(auth_path: &Path, dir: &Path) -> Result<Option<String>> {
     Ok(Some(uid))
 }
 
+/// 把旧版 DSH 账号库（`~/.dsh/workbuddy-accounts`）里**不存在于** hub 账号库的存档
+/// 拷过来。hub 自己的存档不覆盖 —— 它的令牌更新。
+///
+/// 一次性兼容：目录不存在时返回 0，调用方可以无条件调用。
+pub fn import_from_dsh(dsh_dir: &Path, dir: &Path) -> Result<usize> {
+    if !dsh_dir.is_dir() {
+        return Ok(0);
+    }
+    let mut imported = 0usize;
+    for entry in fs::read_dir(dsh_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !is_canonical(name) || !path.is_file() {
+            continue;
+        }
+        let target = dir.join(name);
+        if target.exists() {
+            continue;
+        }
+        fs::create_dir_all(dir)
+            .with_context(|| format!("创建账号库目录失败：{}", dir.display()))?;
+        fs::copy(&path, &target)
+            .with_context(|| format!("导入存档失败：{}", path.display()))?;
+        imported += 1;
+    }
+    Ok(imported)
+}
+
 fn read_token(value: &Value, key: &AtRestKey) -> Result<String> {
     if let Some(s) = value.as_str() {
         return Ok(s.to_string());
@@ -307,6 +338,37 @@ mod tests {
 
         // 第二次不覆盖
         assert!(save_current(&auth, &dir).unwrap().is_none());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn imports_missing_dsh_archives_only() {
+        let root = std::env::temp_dir().join(format!("hub-dsh-import-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dsh = root.join("dsh");
+        let hub = root.join("accounts");
+        fs::create_dir_all(&dsh).unwrap();
+
+        let a = dsh.join("11111111-1111-1111-1111-111111111111.json");
+        fs::write(&a, r#"{"account":{"uid":"11111111-1111-1111-1111-111111111111"}}"#).unwrap();
+        fs::write(
+            dsh.join("22222222-2222-2222-2222-222222222222.json.bak"),
+            "noise",
+        )
+        .unwrap();
+
+        assert_eq!(import_from_dsh(&dsh, &hub).unwrap(), 1);
+        assert!(hub.join("11111111-1111-1111-1111-111111111111.json").exists());
+        assert!(!hub.join("22222222-2222-2222-2222-222222222222.json.bak").exists());
+
+        // hub 里已有的不覆盖
+        let mine = hub.join("11111111-1111-1111-1111-111111111111.json");
+        fs::write(&mine, "hub-own").unwrap();
+        assert_eq!(import_from_dsh(&dsh, &hub).unwrap(), 0);
+        assert_eq!(fs::read_to_string(&mine).unwrap(), "hub-own");
+
+        // 目录不存在时静默返回 0
+        assert_eq!(import_from_dsh(&root.join("nope"), &hub).unwrap(), 0);
         let _ = fs::remove_dir_all(&root);
     }
 

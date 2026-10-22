@@ -58,8 +58,15 @@ pub struct CheckinRecord {
     pub state: String,
     pub credit: i64,
     pub streak_days: i64,
+    /// 账号剩余积分；-1 表示还没拉到过（旧记录或请求失败）
+    #[serde(default = "unknown_credits")]
+    pub total_credits: i64,
     pub message: String,
     pub updated_at: i64,
+}
+
+fn unknown_credits() -> i64 {
+    -1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +193,7 @@ pub fn check_and_claim(c: &Credentials, today: &str) -> CheckinRecord {
         state: "error".into(),
         credit: 0,
         streak_days: 0,
+        total_credits: -1,
         message: String::new(),
         updated_at: crate::now_secs(),
     };
@@ -198,6 +206,7 @@ pub fn check_and_claim(c: &Credentials, today: &str) -> CheckinRecord {
         }
     };
     rec.streak_days = st.streak_days;
+    rec.total_credits = st.total_credits;
     if !st.active {
         rec.state = "inactive".into();
         rec.message = "签到活动未开启".into();
@@ -305,6 +314,7 @@ mod tests {
                 state: "claimed".into(),
                 credit: 10,
                 streak_days: 3,
+                total_credits: 120,
                 message: String::new(),
                 updated_at: 0,
             },
@@ -317,6 +327,7 @@ mod tests {
                 state: "error".into(),
                 credit: 0,
                 streak_days: 0,
+                total_credits: -1,
                 message: "x".into(),
                 updated_at: 0,
             },
@@ -329,6 +340,7 @@ mod tests {
                 state: "claimed".into(),
                 credit: 10,
                 streak_days: 1,
+                total_credits: 100,
                 message: String::new(),
                 updated_at: 0,
             },

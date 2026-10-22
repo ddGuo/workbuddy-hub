@@ -210,25 +210,26 @@ const MOCK_CHECKIN: CheckinStore = (() => {
   const today = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const rows: [string, string, number, number, string][] = [
-    ['128a8f9c-9167-46e5-86e7-a61fa5e766ce', 'already', 5, 100, '今天已签到 · 连签 5 天'],
-    ['438b979e-2c4f-4b21-983c-d2e0081ce5b5', 'already', 3, 100, '今天已签到 · 连签 3 天'],
-    ['4dba68a4-797f-4a97-a7e0-a23b261a3d48', 'error', 0, 0, 'HTTP 401 · 登录已失效'],
-    ['697af213-6a63-4edb-ad9c-1ff588ee434d', 'already', 5, 100, '今天已签到 · 连签 5 天'],
-    ['70859058-c2c9-4c42-a463-2b773aa953bb', 'already', 7, 100, '今天已签到 · 连签 7 天'],
-    ['8bc5fd09-3730-4a8a-9182-6dadb2a1b058', 'claimed', 16, 100, '签到成功 · +100 积分'],
-    ['d0925912-43cb-466c-98a6-d06c7d86e8ad', 'claimed', 3, 100, '签到成功 · +100 积分'],
-    ['db0427fd-b175-497c-85a0-c01d8f35cb13', 'inactive', 0, 0, '签到活动未开启'],
-    ['edef9155-d7fc-473d-9684-525b5987a911', 'already', 4, 100, '今天已签到 · 连签 4 天'],
+  const rows: [string, string, number, number, string, number][] = [
+    ['128a8f9c-9167-46e5-86e7-a61fa5e766ce', 'already', 5, 100, '今天已签到 · 连签 5 天', 1240],
+    ['438b979e-2c4f-4b21-983c-d2e0081ce5b5', 'already', 3, 100, '今天已签到 · 连签 3 天', 860],
+    ['4dba68a4-797f-4a97-a7e0-a23b261a3d48', 'error', 0, 0, 'HTTP 401 · 登录已失效', -1],
+    ['697af213-6a63-4edb-ad9c-1ff588ee434d', 'already', 5, 100, '今天已签到 · 连签 5 天', 1240],
+    ['70859058-c2c9-4c42-a463-2b773aa953bb', 'already', 7, 100, '今天已签到 · 连签 7 天', 640],
+    ['8bc5fd09-3730-4a8a-9182-6dadb2a1b058', 'claimed', 16, 100, '签到成功 · +100 积分', 2380],
+    ['d0925912-43cb-466c-98a6-d06c7d86e8ad', 'claimed', 3, 100, '签到成功 · +100 积分', 2380],
+    ['db0427fd-b175-497c-85a0-c01d8f35cb13', 'inactive', 0, 0, '签到活动未开启', 0],
+    ['edef9155-d7fc-473d-9684-525b5987a911', 'already', 4, 100, '今天已签到 · 连签 4 天', 1520],
   ];
   const records: Record<string, CheckinRecord> = {};
-  for (const [uid, state, streak, credit, message] of rows) {
+  for (const [uid, state, streak, credit, message, total] of rows) {
     records[uid] = {
       uid,
       date,
       state: state as CheckinRecord['state'],
       credit,
       streak_days: streak,
+      total_credits: total,
       message,
       updated_at: Math.floor(Date.now() / 1000) - 60,
     };
@@ -259,9 +260,14 @@ const MOCK_AUTH: AuthState = {
   reason: null,
 };
 
-export async function syncCurrentAccount(): Promise<string | null> {
-  if (!isTauri) return null;
-  return invoke<string | null>('sync_current_account');
+export interface SyncAccountsResult {
+  current: string | null;
+  imported: number;
+}
+
+export async function syncAccounts(): Promise<SyncAccountsResult> {
+  if (!isTauri) return { current: null, imported: 0 };
+  return invoke<SyncAccountsResult>('sync_accounts');
 }
 
 export async function authState(): Promise<AuthState> {

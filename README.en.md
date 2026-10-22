@@ -40,7 +40,8 @@ Verified against 9 accounts: after unifying, the task list is complete and the c
 - **Zero-gap switching** — tasks survive the switch, conversations pick up where they left off
 - **Task overview** — cross-account list, status filters, search by title / path / account (`/` to focus), grouped by account or time
 - **Automatic account archive** — sign a new account into the client and hub saves it, no external tool needed
-- **Account identity** — masked phone numbers (`199****9283`), falling back to nickname or uid prefix
+- **Account identity** — masked phone numbers (`199****9283`), check-in streak and **remaining credits**
+- **Collapsible sidebar** — hide the check-in / unify / client cards to make room for accounts
 - **One-click switch** — backup credentials and database → atomic write → unify → restart, automatic rollback on failure
 - **Task unification** — rewrites `sessions.user_id` so the native list shows everything; original ownership archived
 - **Rate-limit detection** — reads the raw 429 text, determines scope (single model vs. account quota) and reset time
@@ -220,7 +221,7 @@ Authorization: Bearer <accessToken> · X-User-Id · X-Domain
 | No HTTP crate — use the system `curl` | Dozens fewer dependencies; curl uses Schannel and the system trust store |
 | Request config via `stdin` (`curl -K -`) | The token never appears in argv or a temp file |
 | First run 20 s after start, then every 30 min | Checked in at boot, and it crosses midnight |
-| Skip accounts already resolved today | 9 accounts × every 30 min should not produce pointless requests |
+| Resolved accounts only re-check status, never claim twice | Keeps the credit number in the list fresh |
 | No retry for 6 h after a failure | Expired credentials should not be hammered; manual runs are exempt |
 | Do not forge `X-Device-Token` | That is the client's Turing SDK anti-bot header; it works without it |
 

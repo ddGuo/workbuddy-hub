@@ -116,7 +116,15 @@ pub fn data_root() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".workbuddy"))
 }
 
-/// DSH 账号库目录（复用现有凭据池）。
+/// 旧版 DSH 账号库，仅用于一次性导入，之后不再读写。
+pub fn legacy_accounts_dir() -> Result<PathBuf> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| anyhow!("无法确定用户主目录"))?;
+    Ok(PathBuf::from(home).join(".dsh").join("workbuddy-accounts"))
+}
+
+/// hub 自己的账号库：`~/.workbuddy-hub/accounts/<uid>.json`。
 pub fn accounts_dir() -> Result<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))

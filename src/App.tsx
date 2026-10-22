@@ -9,7 +9,7 @@ import {
   checkinRun,
   checkinSetAuto,
   authState,
-  syncCurrentAccount,
+  syncAccounts,
   describeError,
   isTauri,
   listAccounts,
@@ -42,6 +42,8 @@ import type {
   TaskRow,
   UnifyPlan,
 } from './types';
+
+const fmtInt = (n: number) => Math.round(n).toLocaleString('zh-CN');
 
 const STATUS_LABEL: Record<string, string> = {
   working: '进行中',
@@ -128,6 +130,9 @@ export default function App() {
   const [checkin, setCheckin] = useState<CheckinStore | null>(null);
   const [profiles, setProfiles] = useState<ProfileStore | null>(null);
   const [auth, setAuth] = useState<AuthState | null>(null);
+  const [cardsOpen, setCardsOpen] = useState(
+    () => localStorage.getItem('hub.cardsOpen') !== '0',
+  );
   const [maximized, setMaximized] = useState(false);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinStep, setCheckinStep] = useState('');
@@ -164,11 +169,14 @@ export default function App() {
     const un4 = listen<string>('accounts-updated', () => {
       listAccounts().then(setAccounts).catch(() => {});
     });
+    // 后台签到/积分刷新完成后推一次整份记录
+    const un5 = listen<CheckinStore>('checkin-updated', (e) => setCheckin(e.payload));
     progressRef.current = () => {
       void un1.then((f) => f());
       void un2.then((f) => f());
       void un3.then((f) => f());
       void un4.then((f) => f());
+      void un5.then((f) => f());
     };
     return () => {
       progressRef.current?.();
@@ -202,9 +210,12 @@ export default function App() {
     try {
       // 首批只读本地文件：账号与任务先出来
       const nextAuth = await authState();
-      // 新机器上账号库可能还不存在：把当前登录的账号导入一份
+      // 账号库里可能还没有当前账号：存一份，并把旧版 DSH 的存档导进来
       if (nextAuth.logged_in) {
-        await syncCurrentAccount().catch(() => {});
+        const r = await syncAccounts().catch(() => null);
+        if (r && r.imported > 0) {
+          setToast({ kind: 'ok', text: `已从旧账号库导入 ${r.imported} 个账号` });
+        }
       }
       const [t, a] = await Promise.allSettled([listTasks(), listAccounts()]);
       if (seq !== loadSeq.current) return;
@@ -245,7 +256,7 @@ export default function App() {
           setAuth(next);
           setCurrent(next.current_uid ?? '');
           if (next.logged_in) {
-            await syncCurrentAccount().catch(() => {});
+            await syncAccounts().catch(() => {});
             listAccounts().then(setAccounts).catch(() => {});
           }
         })();
@@ -452,6 +463,13 @@ export default function App() {
     if (a && isExpired(a)) return '凭据已过期，请先在客户端重新登录该账号';
     if (busy) return '正在执行其他操作';
     return null;
+  }
+
+  function toggleCards() {
+    setCardsOpen((open) => {
+      localStorage.setItem('hub.cardsOpen', open ? '0' : '1');
+      return !open;
+    });
   }
 
   async function handleOpenClient() {
@@ -755,8 +773,6 @@ export default function App() {
                         {a.taskCount > 0 && <span className="badge">{a.taskCount}</span>}
                       </div>
                       <div className="account-sub">
-                        <code>{a.short_uid}</code>
-                        <span className="sep">·</span>
                         {expiredAcct ? (
                           <span
                             className="expired-text"
@@ -771,10 +787,22 @@ export default function App() {
                             }`}
                             title={ck.message}
                           >
-                            {ck.state === 'error' ? '签到失败' : ck.state === 'inactive' ? '无活动' : `已签 ${ck.streak_days} 天`}
+                            {ck.state === 'error'
+                              ? '签到失败'
+                              : ck.state === 'inactive'
+                                ? '无活动'
+                                : `已签 ${ck.streak_days} 天`}
                           </span>
                         ) : (
-                          <span>凭证 {fmtDate(a.refresh_expires_at)}</span>
+                          <span>{fmtDate(a.refresh_expires_at)} 到期</span>
+                        )}
+                        {ck && ck.total_credits >= 0 && (
+                          <>
+                            <span className="sep">·</span>
+                            <span className="credits" title="剩余积分">
+                              {fmtInt(ck.total_credits)} 积分
+                            </span>
+                          </>
                         )}
                       </div>
                     </div>
@@ -795,7 +823,8 @@ export default function App() {
               })}
           </div>
 
-          <div className="rail-foot">
+          {cardsOpen && (
+            <div className="rail-foot">
             <section className="side-card checkin-card">
               <div className="side-card-head">
                 <span className="side-card-title">每日签到</span>
@@ -873,7 +902,21 @@ export default function App() {
                 </div>
               </section>
             )}
-          </div>
+            </div>
+          )}
+
+          <button className="rail-toggle" onClick={toggleCards} aria-expanded={cardsOpen}>
+            <span>{cardsOpen ? '收起面板' : '展开面板'}</span>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d={cardsOpen ? 'M6 14l6-6 6 6' : 'M6 10l6 6 6-6'}
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </aside>
 
         <main className="main">
