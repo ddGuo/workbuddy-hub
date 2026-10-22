@@ -145,7 +145,7 @@ input {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 9px 16px;
+  padding: 9px 10px 9px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-glass);
   backdrop-filter: blur(14px);
@@ -393,6 +393,48 @@ input {
   background: var(--surface);
   color: var(--accent);
   box-shadow: var(--shadow-sm);
+}
+
+/* 自定义标题栏按钮（无边框窗口） */
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.win-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.win-btn:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.win-btn:active {
+  background: var(--line);
+}
+
+.win-btn.close:hover {
+  background: #e5484d;
+  color: #fff;
+}
+
+.win-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 /* ---------- 主体 ---------- */

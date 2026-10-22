@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import TaskDetail from './TaskDetail';
 import {
   autostartGet,
@@ -121,6 +122,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [checkin, setCheckin] = useState<CheckinStore | null>(null);
   const [profiles, setProfiles] = useState<ProfileStore | null>(null);
+  const [maximized, setMaximized] = useState(false);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinStep, setCheckinStep] = useState('');
   const progressRef = useRef<(() => void) | null>(null);
@@ -209,6 +211,24 @@ export default function App() {
     return () => window.clearTimeout(id);
   }, [toast]);
 
+  // 自定义标题栏：跟随窗口的还原/最大化状态换图标
+  useEffect(() => {
+    if (!isTauri) return;
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    const sync = () => {
+      win.isMaximized().then(setMaximized).catch(() => {});
+    };
+    sync();
+    win
+      .onResized(sync)
+      .then((f) => {
+        unlisten = f;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
+  }, []);
+
   // 按 / 直接聚焦搜索，和大多数列表类工具的习惯一致
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -234,6 +254,25 @@ export default function App() {
     }, 60_000);
     return () => window.clearInterval(id);
   }, []);
+
+  async function winAction(action: 'min' | 'max' | 'close') {
+    if (!isTauri) return;
+    const win = getCurrentWindow();
+    try {
+      if (action === 'min') await win.minimize();
+      else if (action === 'max') await win.toggleMaximize();
+      else await win.close(); // 关窗走后端逻辑：隐藏到托盘
+    } catch (e) {
+      setToast({ kind: 'err', text: `窗口操作失败：${String(e)}` });
+    }
+  }
+
+  // 双击标题栏空白处 = 最大化/还原；点在按钮或输入框上不触发
+  function onTitlebarDoubleClick(e: ReactMouseEvent<HTMLElement>) {
+    const el = e.target as HTMLElement;
+    if (el.closest('button, input, label, .theme-switch, .window-controls')) return;
+    void winAction('max');
+  }
 
   async function toggleAutostart(next: boolean) {
     try {
@@ -444,8 +483,12 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
+      <header
+        className="topbar"
+        data-tauri-drag-region
+        onDoubleClick={onTitlebarDoubleClick}
+      >
+        <div className="brand" data-tauri-drag-region>
           <span className="mark">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
@@ -456,8 +499,10 @@ export default function App() {
               />
             </svg>
           </span>
-          <h1>WorkBuddy Hub</h1>
-          <span className="version">v0.1.0</span>
+          <h1 data-tauri-drag-region>WorkBuddy Hub</h1>
+          <span className="version" data-tauri-drag-region>
+            v0.1.0
+          </span>
           {!isTauri && <span className="mock">示例数据</span>}
         </div>
 
@@ -516,6 +561,72 @@ export default function App() {
                 {t.icon}
               </button>
             ))}
+          </div>
+
+          <div className="window-controls">
+            <button
+              className="win-btn"
+              title="最小化"
+              aria-label="最小化"
+              onClick={() => void winAction('min')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+            <button
+              className="win-btn"
+              title={maximized ? '向下还原' : '最大化'}
+              aria-label={maximized ? '向下还原' : '最大化'}
+              onClick={() => void winAction('max')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                {maximized ? (
+                  <>
+                    <rect
+                      x="5.5"
+                      y="8"
+                      width="10.5"
+                      height="10.5"
+                      rx="1.6"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                    />
+                    <path
+                      d="M8.5 8V6.2c0-.66.54-1.2 1.2-1.2h8.1c.66 0 1.2.54 1.2 1.2v8.1c0 .66-.54 1.2-1.2 1.2H16"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                  </>
+                ) : (
+                  <rect
+                    x="5.5"
+                    y="5.5"
+                    width="13"
+                    height="13"
+                    rx="1.8"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                  />
+                )}
+              </svg>
+            </button>
+            <button
+              className="win-btn close"
+              title="关闭到托盘"
+              aria-label="关闭"
+              onClick={() => void winAction('close')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M6 6l12 12M18 6 6 18"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
           </div>
         </div>
       </header>
