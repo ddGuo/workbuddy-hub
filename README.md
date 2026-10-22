@@ -349,6 +349,13 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 每次启动都新增 `.dmp` 就是这个原因。注入沿**进程树**传播，清环境变量没用 ——
 必须从干净的父进程（桌面、开始菜单）启动。
 
+**关掉再打开，会出现一个黑屏窗口。**
+两个原因叠在一起：关窗只是隐藏到托盘，再点图标时**第二个进程会先建窗口**、
+再发现已有实例，那个窗口是黑的；同时被唤起的旧窗口可能因为 WebView2 暂停绘制，
+只画出一帧黑屏。0.1.4 起单实例判定提前到建窗口之前，显示窗口后也会强制重绘一次。
+
+如果还遇到：任务管理器里结束 `workbuddy-hub.exe`（连带残留的 `msedgewebview2.exe`）再打开。
+
 **`cargo build` 报 TLS / 502。**
 本机代理会拒绝 crates.io，需要配镜像（`~/.cargo/config.toml` 指向 rsproxy）。
 

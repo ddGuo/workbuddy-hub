@@ -520,24 +520,85 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        nudge_repaint(&w);
     }
+}
+
+enum Instance {
+    /// 抢到了端口，负责监听后续实例的「显示窗口」请求
+    Primary(std::net::TcpListener),
+    /// 已有实例在跑，已经通知它把窗口叫到前台
+    AlreadyRunning,
+    /// 端口被别的程序占用：照常启动，只是失去互斥
+    PortBusy,
+}
+
+/// 用 127.0.0.1:47821 做互斥。
+///
+/// 必须在**建窗口之前**调用：放在 setup 里的话，第二个进程会先建出一个
+/// 黑窗口，再被退出逻辑杀掉，用户看到的就是一次黑屏闪烁。
+fn claim_instance() -> Instance {
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    const PORT: u16 = 47821;
+
+    match TcpListener::bind(("127.0.0.1", PORT)) {
+        Ok(listener) => Instance::Primary(listener),
+        Err(_) => {
+            // 端口被占：只有对面真的收下消息，才认定是已有实例；
+            // 否则可能只是别的程序占了这个端口，照常启动。
+            let signaled = TcpStream::connect(("127.0.0.1", PORT))
+                .ok()
+                .and_then(|mut s| s.write_all(b"show").ok())
+                .is_some();
+            if signaled {
+                Instance::AlreadyRunning
+            } else {
+                Instance::PortBusy
+            }
+        }
+    }
+}
+
+/// WebView2 在窗口隐藏/恢复后偶尔只画一帧黑屏。
+/// 轻微改一次尺寸再改回来，强制它重新计算视口 —— 放在后台线程里，不挡 UI。
+fn nudge_repaint(w: &tauri::WebviewWindow) {
+    let w = w.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        // 最大化窗口改尺寸会被系统当成还原，跳过
+        if w.is_maximized().unwrap_or(false) {
+            return;
+        }
+        let Ok(size) = w.inner_size() else {
+            return;
+        };
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let logical = size.to_logical::<f64>(scale);
+        let _ = w.set_size(tauri::LogicalSize::new(logical.width + 1.0, logical.height));
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let _ = w.set_size(tauri::LogicalSize::new(logical.width, logical.height));
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 单实例判定要在建窗口之前，避免第二个进程闪一个黑窗口
+    let instance = claim_instance();
+    if matches!(&instance, Instance::AlreadyRunning) {
+        return;
+    }
+
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             use tauri::Manager;
 
-            // WebView2 在窗口首次显示时偶尔不跟随窗口完成布局，
-            // 显示后轻微改变一次尺寸能强制它重新计算视口。
+            // 首次显示时 WebView2 偶尔不跟随窗口完成布局，延后修正一次
             if let Some(w) = app.get_webview_window("main") {
                 let fix = w.clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(900));
-                    let _ = fix.set_size(tauri::LogicalSize::new(1181.0, 761.0));
-                    std::thread::sleep(std::time::Duration::from_millis(150));
-                    let _ = fix.set_size(tauri::LogicalSize::new(1180.0, 760.0));
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    nudge_repaint(&fix);
                 });
             }
 
@@ -577,35 +638,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 单实例：托盘应用被重复启动会出现两个图标，而且用户点第二次
-            // 往往以为「没反应」。这里用一个本地端口做互斥 —— 抢到端口的
-            // 是主实例，抢不到的把已有窗口叫到前台再退出。
-            {
-                use std::io::Write;
-                use std::net::{TcpListener, TcpStream};
-                const PORT: u16 = 47821;
-                match TcpListener::bind(("127.0.0.1", PORT)) {
-                    Ok(listener) => {
-                        let handle = app.handle().clone();
-                        std::thread::spawn(move || {
-                            for _ in listener.incoming().flatten() {
-                                show_main(&handle);
-                            }
-                        });
+            // 主实例负责接受「显示窗口」的请求
+            if let Instance::Primary(listener) = instance {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    for _ in listener.incoming().flatten() {
+                        show_main(&handle);
                     }
-                    Err(_) => {
-                        // 端口被占：要么是已有实例，要么是别的程序。只有确认
-                        // 对面能收下这条消息，才认定「已有实例」并退出；
-                        // 否则照常启动，不要因为端口冲突把自己挡在门外。
-                        let signaled = TcpStream::connect(("127.0.0.1", PORT))
-                            .ok()
-                            .and_then(|mut s| s.write_all(b"show").ok())
-                            .is_some();
-                        if signaled {
-                            std::process::exit(0);
-                        }
-                    }
-                }
+                });
             }
 
             // 账号资料：启动 8 秒后补一次（只有缺失或超过 7 天的才会真请求）

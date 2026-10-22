@@ -370,6 +370,16 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 If every launch adds a `.dmp`, that is it. The injection follows the **process tree**, so clearing
 environment variables does not help — start it from a clean parent (Explorer, Start menu).
 
+**After closing and reopening, a black window appears.**
+Two causes stack up: closing only hides to the tray, so clicking the shortcut starts a
+**second process that creates its own window** before discovering the running instance — that
+window is black. Meanwhile the restored window may draw a single black frame because WebView2
+was suspended while hidden. Since 0.1.4 the single-instance check happens before any window is
+created, and showing the window forces a repaint.
+
+If it still happens: end `workbuddy-hub.exe` (and any leftover `msedgewebview2.exe`) in Task
+Manager, then relaunch.
+
 **`cargo build` fails with TLS / 502.**
 A local proxy is rejecting crates.io; configure a mirror (`~/.cargo/config.toml` pointing at rsproxy).
 
