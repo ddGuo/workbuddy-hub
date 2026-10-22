@@ -242,6 +242,9 @@ POST {endpoint}/v2/billing/meter/daily-checkin
 
 因此新机器不再需要任何外部账号库：在客户端登录过的账号会自动出现在 hub 里。
 
+旧版 `.dsh/workbuddy-accounts` 的存档不会被丢弃：同步时把新库里**缺失**的那些拷过来，
+已有的不覆盖（hub 的令牌更新）。所以升级后原来的账号还在，之后新登录的账号继续自动存。
+
 ### 凭据文件
 
 ```json
