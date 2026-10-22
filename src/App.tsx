@@ -121,6 +121,7 @@ export default function App() {
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinStep, setCheckinStep] = useState('');
   const progressRef = useRef<(() => void) | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   // 主题：写 data-theme，选「跟随系统」时监听系统变化
   useEffect(() => {
@@ -200,6 +201,21 @@ export default function App() {
     const id = window.setTimeout(() => setToast(null), 6000);
     return () => window.clearTimeout(id);
   }, [toast]);
+
+  // 按 / 直接聚焦搜索，和大多数列表类工具的习惯一致
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // 限流守护目前只做「报告」：每分钟扫一遍失败会话，读到 429 就在列表上方提示。
   useEffect(() => {
@@ -417,16 +433,17 @@ export default function App() {
         <div className="brand">
           <span className="mark">
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 6h16M4 12h10M4 18h13" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              <path
+                d="M4 6h16M4 12h10M4 18h13"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
             </svg>
           </span>
-          <div className="brand-text">
-            <h1>WorkBuddy Hub</h1>
-            <p>
-              {accounts.length} 个账号 · {tasks.length} 个任务
-              {!isTauri && <span className="mock">示例数据</span>}
-            </p>
-          </div>
+          <h1>WorkBuddy Hub</h1>
+          <span className="version">v0.1.0</span>
+          {!isTauri && <span className="mock">示例数据</span>}
         </div>
 
         <div className="actions">
@@ -436,20 +453,42 @@ export default function App() {
               <path d="m16 16 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
             </svg>
             <input
+              ref={searchRef}
               placeholder="搜索任务、路径或账号"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
+            <kbd className="kbd">/</kbd>
           </label>
-          <button className="btn" onClick={() => void load()} disabled={loading}>
-            {loading ? '刷新中' : '刷新'}
+
+          <button
+            className="icon-btn round"
+            onClick={() => void load()}
+            disabled={loading}
+            title={loading ? '刷新中' : '刷新'}
+            aria-label="刷新"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className={loading ? 'spin' : ''}>
+              <path
+                d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
+
           <button className="btn" onClick={() => void openUnifyDialog()} disabled={busy || !current}>
             同步任务
           </button>
+
+          <span className="actions-sep" />
+
           <button className="btn primary" onClick={() => void openClient()}>
             打开客户端
           </button>
+
           <div className="theme-switch" title="主题">
             {THEMES.map((t) => (
               <button
@@ -610,7 +649,7 @@ export default function App() {
         </aside>
 
         <main className="main">
-          <div className="toolbar">
+          <div className="subbar">
             <div className="filters">
               {['all', ...Object.keys(statusCounts)].map((s) => (
                 <button
@@ -623,16 +662,28 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div className="seg">
-              <button
-                className={groupBy === 'account' ? 'on' : ''}
-                onClick={() => setGroupBy('account')}
-              >
-                按账号
-              </button>
-              <button className={groupBy === 'time' ? 'on' : ''} onClick={() => setGroupBy('time')}>
-                按时间
-              </button>
+
+            <div className="subbar-right">
+              <span className={`conn ${info ? (info.exe ? 'ok' : 'bad') : ''}`}>
+                <i />
+                {info ? (info.exe ? '客户端已连接' : '未找到客户端') : '正在检测'}
+                <em>·</em>
+                {accounts.length} 个账号
+              </span>
+              <div className="seg">
+                <button
+                  className={groupBy === 'account' ? 'on' : ''}
+                  onClick={() => setGroupBy('account')}
+                >
+                  按账号
+                </button>
+                <button
+                  className={groupBy === 'time' ? 'on' : ''}
+                  onClick={() => setGroupBy('time')}
+                >
+                  按时间
+                </button>
+              </div>
             </div>
           </div>
 

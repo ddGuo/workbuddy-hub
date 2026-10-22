@@ -144,8 +144,8 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  padding: 12px 18px;
+  gap: 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-glass);
   backdrop-filter: blur(14px);
@@ -156,56 +156,59 @@ input {
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   min-width: 0;
 }
 
 .mark {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   background: linear-gradient(140deg, var(--accent), var(--accent-2));
   color: var(--accent-ink);
   display: grid;
   place-items: center;
-  box-shadow: 0 6px 16px rgba(124, 140, 248, 0.28);
+  box-shadow: 0 5px 14px rgba(124, 140, 248, 0.26);
   flex-shrink: 0;
 }
 
 .mark svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
 }
 
-.brand-text h1 {
-  font-size: 14.5px;
+.brand h1 {
+  font-size: 13.5px;
   font-weight: 600;
   margin: 0;
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
-.brand-text p {
-  margin: 0;
-  font-size: 11px;
+.version {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
   color: var(--ink-3);
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  background: var(--surface-2);
+  letter-spacing: 0;
 }
 
 .mock {
-  padding: 0 6px;
+  padding: 1px 6px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: var(--surface-2);
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--ink-3);
 }
 
 .actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -213,24 +216,30 @@ input {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 32px;
-  width: 224px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  height: 30px;
+  width: 236px;
+  padding: 0 8px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: var(--surface-2);
   color: var(--ink-3);
-  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+
+.search:hover {
+  border-color: var(--line);
 }
 
 .search:focus-within {
   border-color: var(--accent);
+  background: var(--surface);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .search svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
 }
 
@@ -240,11 +249,35 @@ input {
   background: none;
   outline: none;
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .search input::placeholder {
   color: var(--ink-3);
+}
+
+.kbd {
+  flex-shrink: 0;
+  min-width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.actions-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+  margin: 0 3px;
+  flex-shrink: 0;
 }
 
 /* ---------- 按钮 ---------- */
@@ -254,13 +287,13 @@ input {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
+  height: 30px;
+  padding: 0 11px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: var(--surface-2);
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: 12px;
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.15s var(--ease), border-color 0.15s var(--ease),
@@ -287,7 +320,7 @@ input {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: var(--accent-ink);
   font-weight: 500;
-  box-shadow: 0 6px 16px rgba(124, 140, 248, 0.24);
+  box-shadow: 0 5px 14px rgba(124, 140, 248, 0.24);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -296,31 +329,58 @@ input {
 }
 
 .btn.sm {
-  height: 27px;
-  padding: 0 10px;
-  font-size: 11.5px;
-  border-radius: 8px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11px;
+  border-radius: 7px;
+}
+
+.icon-btn.round {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border-color: transparent;
+}
+
+.icon-btn.round:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--surface-3);
+}
+
+.icon-btn.round:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
 }
 
 .theme-switch {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: var(--surface-2);
 }
 
 .theme-switch button {
-  width: 28px;
-  height: 26px;
+  width: 25px;
+  height: 23px;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: none;
   color: var(--ink-3);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
@@ -699,33 +759,73 @@ input {
   flex-direction: column;
 }
 
-.toolbar {
+.subbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 11px 18px;
+  height: 46px;
+  padding: 0 18px;
   border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
+}
+
+.subbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.conn i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.conn.ok i {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.conn.bad i {
+  background: var(--err);
+  box-shadow: 0 0 0 3px var(--err-soft);
+}
+
+.conn em {
+  font-style: normal;
+  opacity: 0.5;
+  margin: 0 1px;
 }
 
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 3px;
 }
 
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--surface);
+  background: transparent;
   color: var(--ink-2);
-  font-size: 12px;
+  font-size: 11.5px;
   cursor: pointer;
   transition: color 0.15s var(--ease), border-color 0.15s var(--ease),
     background 0.15s var(--ease);
@@ -733,18 +833,18 @@ input {
 
 .chip:hover {
   color: var(--ink);
-  border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .chip.on {
   background: var(--accent-soft);
-  border-color: var(--accent);
   color: var(--accent);
+  font-weight: 500;
 }
 
 .chip-n {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--ink-3);
 }
 
@@ -754,22 +854,22 @@ input {
 
 .seg {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 7px;
   background: var(--surface-2);
   flex-shrink: 0;
 }
 
 .seg button {
-  height: 25px;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 9px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 5px;
   background: none;
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: 11px;
   cursor: pointer;
 }
 
