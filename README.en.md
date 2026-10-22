@@ -70,9 +70,15 @@ so unification rewrites that field. Original ownership is stored in
 
 ### Install
 
-Download `WorkBuddy Hub_x.y.z_x64-setup.exe` from
+Download `WorkBuddy.Hub_0.1.0_x64-setup.exe` from
 [Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) and run it. There is also a
 portable `workbuddy-hub.exe` (frontend embedded in the binary).
+
+To share it with someone, use this stable link (always points at the latest release):
+
+```
+https://github.com/ddGuo/workbuddy-hub/releases/latest
+```
 
 > The installer is not code-signed, so SmartScreen may warn you: "More info → Run anyway".
 > If you prefer, build it yourself — see below.

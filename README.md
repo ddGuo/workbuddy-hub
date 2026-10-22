@@ -68,8 +68,14 @@ hub 在切号时会把已有会话的归属改到新账号，于是：
 ### 安装
 
 从 [Releases](https://github.com/ddGuo/workbuddy-hub/releases/latest) 下载
-`WorkBuddy Hub_x.y.z_x64-setup.exe` 双击安装；也可以下 `workbuddy-hub.exe`
+`WorkBuddy.Hub_0.1.0_x64-setup.exe` 双击安装；也可以下 `workbuddy-hub.exe`
 （免安装，前端已嵌进二进制）。
+
+想直接发给别人，用这个固定链接（永远指向最新版）：
+
+```
+https://github.com/ddGuo/workbuddy-hub/releases/latest
+```
 
 > 安装包没有代码签名，Windows SmartScreen 可能拦一下：点「更多信息 → 仍要运行」。
 > 介意的话可以从源码构建，见下文。
