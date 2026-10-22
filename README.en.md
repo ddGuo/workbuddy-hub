@@ -380,6 +380,17 @@ created, and showing the window forces a repaint.
 If it still happens: end `workbuddy-hub.exe` (and any leftover `msedgewebview2.exe`) in Task
 Manager, then relaunch.
 
+**The window stops responding while switching accounts.**
+Fixed in 0.1.5: synchronous Tauri commands run inline on the main thread, and a switch waits for
+the client to quit and restart — tens of seconds with no message pump. Those commands now run on
+`spawn_blocking`, so the progress dialog updates step by step.
+
+**After signing out, switching says "credential file not found".**
+It now says "the client is not signed in — sign in to at least one account first", with a banner
+and an "Open client" button in the account rail. Historical accounts stay visible, but the switch
+button is disabled. The credentials are still valid: sign in to any account, come back, and it
+recovers within 500 ms.
+
 **`cargo build` fails with TLS / 502.**
 A local proxy is rejecting crates.io; configure a mirror (`~/.cargo/config.toml` pointing at rsproxy).
 

@@ -8,7 +8,8 @@ import {
   checkinOverview,
   checkinRun,
   checkinSetAuto,
-  currentUid,
+  authState,
+  describeError,
   isTauri,
   listAccounts,
   listTasks,
@@ -33,6 +34,7 @@ import type {
   CheckinStore,
   LimitSignal,
   Ownership,
+  AuthState,
   Probe,
   ProfileStore,
   SwitchPlan,
@@ -124,11 +126,13 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [checkin, setCheckin] = useState<CheckinStore | null>(null);
   const [profiles, setProfiles] = useState<ProfileStore | null>(null);
+  const [auth, setAuth] = useState<AuthState | null>(null);
   const [maximized, setMaximized] = useState(false);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinStep, setCheckinStep] = useState('');
   const progressRef = useRef<(() => void) | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const loadSeq = useRef(0);
 
   // 主题：写 data-theme，选「跟随系统」时监听系统变化
   useEffect(() => {
@@ -166,45 +170,81 @@ export default function App() {
     };
   }, []);
 
+  // 慢命令单独一批：首屏不等它们，失败也不影响账号和任务
+  async function loadSecondary(seq: number) {
+    const [p, o, lim, auto, ck, pf] = await Promise.allSettled([
+      probe(),
+      unifyStatus(),
+      scanLimits(),
+      autostartGet(),
+      checkinOverview(),
+      profilesOverview(),
+    ]);
+    if (seq !== loadSeq.current) return;
+    if (p.status === 'fulfilled') setInfo(p.value);
+    if (o.status === 'fulfilled') setOwnership(o.value);
+    if (lim.status === 'fulfilled') setLimits(lim.value);
+    if (auto.status === 'fulfilled') setAutostart(auto.value);
+    if (ck.status === 'fulfilled') setCheckin(ck.value);
+    if (pf.status === 'fulfilled') setProfiles(pf.value);
+  }
+
   async function load() {
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const [t, a, c, p, o, lim, auto, ck, pf] = await Promise.all([
-        listTasks(),
-        listAccounts(),
-        currentUid(),
-        probe(),
-        unifyStatus().catch(() => null),
-        scanLimits().catch(() => [] as LimitSignal[]),
-        autostartGet().catch(() => false),
-        checkinOverview().catch(() => null),
-        profilesOverview().catch(() => null),
-      ]);
-      setTasks(t);
-      setAccounts(a);
-      setCurrent(c);
-      setInfo(p);
-      setOwnership(o);
-      setLimits(lim);
-      setAutostart(auto);
-      setCheckin(ck);
-      setProfiles(pf);
+      // 首批只读本地文件：账号与任务先出来
+      const [t, a] = await Promise.allSettled([listTasks(), listAccounts()]);
+      const nextAuth = await authState();
+      if (seq !== loadSeq.current) return;
+
+      if (t.status === 'fulfilled') setTasks(t.value);
+      else setError(describeError(t.reason).text);
+      if (a.status === 'fulfilled') setAccounts(a.value);
+      else setError(describeError(a.reason).text);
+
+      setAuth(nextAuth);
+      setCurrent(nextAuth.current_uid ?? '');
+
       // 调试 / 截图用：?task=<id 前缀> 直接打开某条任务的详情
       const openId = new URLSearchParams(window.location.search).get('task');
-      if (openId) {
-        const hit = t.find((x) => x.id.startsWith(openId));
+      if (openId && t.status === 'fulfilled') {
+        const hit = t.value.find((x) => x.id.startsWith(openId));
         if (hit) setDetail(hit);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
+    void loadSecondary(seq);
   }
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // 去客户端登录后切回来，登录态要自动恢复
+  useEffect(() => {
+    if (!isTauri) return;
+    let timer = 0;
+    const onFocus = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void (async () => {
+          const next = await authState();
+          setAuth(next);
+          setCurrent(next.current_uid ?? '');
+          if (next.logged_in) {
+            listAccounts().then(setAccounts).catch(() => {});
+          }
+        })();
+      }, 500);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -392,6 +432,25 @@ export default function App() {
     );
   }, [accounts, activeLimit, current]);
 
+  const nowSec = Math.floor(Date.now() / 1000);
+  const isExpired = (a: AccountSummary) => a.refresh_expires_at <= nowSec;
+  const loggedIn = auth ? auth.logged_in : true;
+
+  function switchBlockReason(a?: AccountSummary): string | null {
+    if (!loggedIn) return '客户端未登录，请先在 WorkBuddy 客户端登录至少一个账号';
+    if (a && isExpired(a)) return '凭据已过期，请先在客户端重新登录该账号';
+    if (busy) return '正在执行其他操作';
+    return null;
+  }
+
+  async function handleOpenClient() {
+    try {
+      await openClient();
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    }
+  }
+
   const today = todayStr();
   const checkinStats = useMemo(() => {
     let done = 0;
@@ -405,6 +464,11 @@ export default function App() {
   }, [checkin, accounts.length, today]);
 
   async function openSwitchDialog(uid: string) {
+    const blocked = switchBlockReason(accountMap.get(uid));
+    if (blocked) {
+      setToast({ kind: 'err', text: blocked });
+      return;
+    }
     setBusy(true);
     try {
       const [sp, up] = await Promise.all([switchPlan(uid), unifyPlan(uid)]);
@@ -416,7 +480,7 @@ export default function App() {
         unifyPlan: up,
       });
     } catch (e) {
-      setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+      setToast({ kind: 'err', text: describeError(e).text });
     } finally {
       setBusy(false);
     }
@@ -538,7 +602,7 @@ export default function App() {
 
           <span className="actions-sep" />
 
-          <button className="btn primary" onClick={() => void openClient()}>
+          <button className="btn primary" onClick={() => void handleOpenClient()}>
             打开客户端
           </button>
 
@@ -631,18 +695,38 @@ export default function App() {
             <span className="rail-count">{accounts.length}</span>
           </div>
 
+          {!loggedIn && (
+            <div className="rail-banner" role="status">
+              <p>客户端未登录，请先在 WorkBuddy 客户端登录至少一个账号</p>
+              <button className="btn sm primary" onClick={() => void handleOpenClient()}>
+                打开客户端
+              </button>
+            </div>
+          )}
+
           <div className="rail-list">
+            {accounts.length === 0 && (
+              <div className="rail-empty">
+                <p>还没有账号存档</p>
+                <span>客户端登录后会自动出现在这里</span>
+                <button className="btn sm" onClick={() => void handleOpenClient()}>
+                  打开客户端
+                </button>
+              </div>
+            )}
             {[...accountMap.values()]
               .sort((a, b) => b.taskCount - a.taskCount)
               .map((a) => {
                 const ck = checkin?.records?.[a.uid];
                 const fresh = ck && ck.date === today;
+                const expiredAcct = isExpired(a);
+                const blocked = switchBlockReason(a);
                 return (
                   <div
                     key={a.uid}
                     className={`account ${a.isCurrent ? 'current' : ''} ${
                       a.taskCount === 0 ? 'empty' : ''
-                    }`}
+                    } ${expiredAcct ? 'expired' : ''}`}
                     title={`${labelOf(a.uid, a.short_uid)}${
                       profiles?.profiles?.[a.uid]?.nickname
                         ? `（${profiles.profiles[a.uid].nickname}）`
@@ -662,7 +746,14 @@ export default function App() {
                       <div className="account-sub">
                         <code>{a.short_uid}</code>
                         <span className="sep">·</span>
-                        {fresh ? (
+                        {expiredAcct ? (
+                          <span
+                            className="expired-text"
+                            title={`凭据到期 ${fmtDate(a.refresh_expires_at)}`}
+                          >
+                            凭据已过期
+                          </span>
+                        ) : fresh ? (
                           <span
                             className={`checkin-tick ${
                               ck.state === 'error' ? 'bad' : ck.state === 'inactive' ? 'off' : ''
@@ -681,7 +772,8 @@ export default function App() {
                     ) : (
                       <button
                         className="mini"
-                        disabled={busy}
+                        disabled={blocked !== null}
+                        title={blocked ?? undefined}
                         onClick={() => void openSwitchDialog(a.uid)}
                       >
                         切换
@@ -789,9 +881,19 @@ export default function App() {
             </div>
 
             <div className="subbar-right">
-              <span className={`conn ${info ? (info.exe ? 'ok' : 'bad') : ''}`}>
+              <span
+                className={`conn ${
+                  !loggedIn ? 'bad' : info ? (info.exe ? 'ok' : 'bad') : ''
+                }`}
+              >
                 <i />
-                {info ? (info.exe ? '客户端已连接' : '未找到客户端') : '正在检测'}
+                {!loggedIn
+                  ? '客户端未登录'
+                  : info
+                    ? info.exe
+                      ? '客户端已连接'
+                      : '未找到客户端'
+                    : '正在检测'}
                 <em>·</em>
                 {accounts.length} 个账号
               </span>
@@ -836,7 +938,8 @@ export default function App() {
                   {limitAlt && (
                     <button
                       className="btn primary"
-                      disabled={busy}
+                      disabled={switchBlockReason(limitAlt) !== null}
+                      title={switchBlockReason(limitAlt) ?? undefined}
                       onClick={() => void openSwitchDialog(limitAlt.uid)}
                     >
                       换到 {labelOf(limitAlt.uid, limitAlt.short_uid)}
@@ -851,8 +954,22 @@ export default function App() {
 
             {!error && filtered.length === 0 && !loading && (
               <div className="empty-state">
-                <p>没有匹配的任务</p>
-                <span>试试清空搜索或换个筛选条件</span>
+                {!loggedIn ? (
+                  <>
+                    <p>客户端未登录</p>
+                    <span>先在 WorkBuddy 客户端登录一个账号，再回来看任务</span>
+                  </>
+                ) : tasks.length === 0 ? (
+                  <>
+                    <p>还没有任务</p>
+                    <span>在 WorkBuddy 里新建一个会话，这里就会出现</span>
+                  </>
+                ) : (
+                  <>
+                    <p>没有匹配的任务</p>
+                    <span>试试清空搜索或换个筛选条件</span>
+                  </>
+                )}
               </div>
             )}
 

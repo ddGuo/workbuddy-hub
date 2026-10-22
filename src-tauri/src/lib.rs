@@ -16,24 +16,136 @@ pub struct ProbeOut {
     at_rest_key_id: Option<String>,
 }
 
+
+const ERR_NO_LOGIN: &str = "NO_LOGIN:";
+const ERR_EXPIRED: &str = "EXPIRED:";
+
+fn no_login() -> String {
+    format!("{ERR_NO_LOGIN}客户端未登录，请先在 WorkBuddy 客户端登录至少一个账号")
+}
+
+fn expired(uid: &str) -> String {
+    let short = &uid[..uid.len().min(8)];
+    format!("{ERR_EXPIRED}账号 {short} 的凭据已过期，请先在客户端重新登录")
+}
+
+/// 把阻塞逻辑丢到 Tauri 的阻塞线程池。
+///
+/// 同步的 `#[tauri::command]` 会在 WebView2 的 IPC 回调（主线程）里内联执行，
+/// 中间任何 sleep / 子进程等待都会让窗口「未响应」，进度事件也发不出去。
+async fn on_blocking<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("后台任务异常退出：{e}"))?
+}
+
+static SWITCH_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// 切号 / 归集互斥。Drop 释放，闭包 panic 也不会把锁留在手里。
+struct BusyGuard(&'static AtomicBool);
+
+impl BusyGuard {
+    fn acquire(flag: &'static AtomicBool, msg: &str) -> Result<Self, String> {
+        if flag.swap(true, Ordering::SeqCst) {
+            Err(msg.to_string())
+        } else {
+            Ok(Self(flag))
+        }
+    }
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+fn match_account<'a>(
+    accounts: &'a [account_store::Account],
+    target: &str,
+) -> Result<&'a account_store::Account, String> {
+    let hits: Vec<_> = accounts
+        .iter()
+        .filter(|a| a.uid.starts_with(target))
+        .collect();
+    match hits.len() {
+        0 => Err(format!("找不到 uid 以 {target} 开头的账号")),
+        1 => Ok(hits[0]),
+        _ => Err(format!("{target} 匹配到多个账号，请写长一点")),
+    }
+}
+
+/// 客户端登录态。永不抛错，前端可以安全地放进 Promise.all。
+#[derive(Serialize)]
+pub struct AuthState {
+    logged_in: bool,
+    current_uid: Option<String>,
+    auth_file: Option<String>,
+    /// no_auth_file / empty_uid / unreadable
+    reason: Option<&'static str>,
+}
+
+#[tauri::command]
+fn auth_state() -> AuthState {
+    let Some(path) = client_compat::auth_file() else {
+        return AuthState {
+            logged_in: false,
+            current_uid: None,
+            auth_file: None,
+            reason: Some("no_auth_file"),
+        };
+    };
+    let file = Some(path.display().to_string());
+    match switch_engine::current_uid(&path) {
+        Ok(uid) if !uid.trim().is_empty() => AuthState {
+            logged_in: true,
+            current_uid: Some(uid),
+            auth_file: file,
+            reason: None,
+        },
+        Ok(_) => AuthState {
+            logged_in: false,
+            current_uid: None,
+            auth_file: file,
+            reason: Some("empty_uid"),
+        },
+        Err(_) => AuthState {
+            logged_in: false,
+            current_uid: None,
+            auth_file: file,
+            reason: Some("unreadable"),
+        },
+    }
+}
+
 fn db_path() -> Result<std::path::PathBuf, String> {
     let root = client_compat::data_root().map_err(|e| e.to_string())?;
     Ok(root.join("workbuddy.db"))
 }
 
 #[tauri::command]
-fn probe() -> Result<ProbeOut, String> {
+async fn probe() -> Result<ProbeOut, String> {
+    on_blocking(probe_blocking).await
+}
+
+fn probe_blocking() -> Result<ProbeOut, String> {
     let root = client_compat::data_root().map_err(|e| e.to_string())?;
     let accounts_dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
 
     // 取密钥会启动一个短命的 Node 进程，放在这里只为在界面上显示 keyId；
     // 失败不影响其它功能。
-    let at_rest_key_id = client_compat::find_exe()
-        .and_then(|exe| client_compat::at_rest_secret(&exe).ok())
+    let exe = client_compat::find_exe();
+    let at_rest_key_id = exe
+        .as_deref()
+        .and_then(|path| client_compat::at_rest_secret(path).ok())
         .map(|s| AtRestKey::from_secret(&s).key_id().to_string());
 
     Ok(ProbeOut {
-        exe: client_compat::find_exe().map(|p| p.display().to_string()),
+        exe: exe.map(|p| p.display().to_string()),
         auth_file: client_compat::auth_file().map(|p| p.display().to_string()),
         data_root: root.display().to_string(),
         db_ok: db_path().map(|p| p.is_file()).unwrap_or(false),
@@ -56,7 +168,8 @@ fn list_accounts() -> Result<Vec<account_store::AccountSummary>, String> {
 }
 
 #[tauri::command]
-fn current_uid() -> Result<String, String> {    let path = client_compat::auth_file().ok_or("找不到凭据文件")?;
+fn current_uid() -> Result<String, String> {
+    let path = client_compat::auth_file().ok_or_else(no_login)?;
     switch_engine::current_uid(&path).map_err(|e| e.to_string())
 }
 
@@ -103,20 +216,21 @@ fn open_folder(path: String) -> Result<(), String> {
 
 /// 生成切号计划。纯只读，不写任何文件。
 #[tauri::command]
-fn switch_plan(target: String) -> Result<switch_engine::SwitchPlan, String> {
+async fn switch_plan(target: String) -> Result<switch_engine::SwitchPlan, String> {
+    on_blocking(move || switch_plan_blocking(&target)).await
+}
+
+fn switch_plan_blocking(target: &str) -> Result<switch_engine::SwitchPlan, String> {
     let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
-    let matches: Vec<_> = accounts
-        .iter()
-        .filter(|a| a.uid.starts_with(target.as_str()))
-        .collect();
-    let account = match matches.len() {
-        0 => return Err(format!("找不到 uid 以 {target} 开头的账号")),
-        1 => matches[0],
-        _ => return Err(format!("{target} 匹配到多个账号，请写长一点")),
-    };
+    let account = match_account(&accounts, target)?;
 
-    let auth = client_compat::auth_file().ok_or("找不到凭据文件")?;
+    // 先判登录态与有效期，别等用户确认完、客户端都退了才发现不可用
+    let auth = client_compat::auth_file().ok_or_else(no_login)?;
+    if account.refresh_expires_at <= hub_core::now_secs() {
+        return Err(expired(&account.uid));
+    }
+
     let current = switch_engine::current_uid(&auth).map_err(|e| e.to_string())?;
     let tasks = task_index::load_tasks(&db_path()?).map_err(|e| e.to_string())?;
     Ok(switch_engine::plan(account, &current, &tasks))
@@ -124,7 +238,11 @@ fn switch_plan(target: String) -> Result<switch_engine::SwitchPlan, String> {
 
 /// 归集计划：把多少条会话改到目标账号名下。纯只读。
 #[tauri::command]
-fn unify_plan(target: Option<String>) -> Result<task_unify::UnifyPlan, String> {
+async fn unify_plan(target: Option<String>) -> Result<task_unify::UnifyPlan, String> {
+    on_blocking(move || unify_plan_blocking(target)).await
+}
+
+fn unify_plan_blocking(target: Option<String>) -> Result<task_unify::UnifyPlan, String> {
     let db = db_path()?;
     let (_, ownership_path, _) = daemon::hub_paths().map_err(|e| e.to_string())?;
     let ownership = task_unify::Ownership::load(&ownership_path).map_err(|e| e.to_string())?;
@@ -134,7 +252,12 @@ fn unify_plan(target: Option<String>) -> Result<task_unify::UnifyPlan, String> {
 
 /// 执行归集。会写数据库，写前自动做在线快照。
 #[tauri::command]
-fn unify_apply(target: Option<String>) -> Result<task_unify::UnifyReport, String> {
+async fn unify_apply(target: Option<String>) -> Result<task_unify::UnifyReport, String> {
+    on_blocking(move || unify_apply_blocking(target)).await
+}
+
+fn unify_apply_blocking(target: Option<String>) -> Result<task_unify::UnifyReport, String> {
+    let _guard = BusyGuard::acquire(&SWITCH_RUNNING, "正在切换或同步，请稍候")?;
     let db = db_path()?;
     let (_, ownership_path, backup_dir) = daemon::hub_paths().map_err(|e| e.to_string())?;
     let target_uid = resolve_target_uid(target)?;
@@ -144,7 +267,12 @@ fn unify_apply(target: Option<String>) -> Result<task_unify::UnifyReport, String
 
 /// 按原始归属表恢复。
 #[tauri::command]
-fn unify_rollback() -> Result<usize, String> {
+async fn unify_rollback() -> Result<usize, String> {
+    on_blocking(unify_rollback_blocking).await
+}
+
+fn unify_rollback_blocking() -> Result<usize, String> {
+    let _guard = BusyGuard::acquire(&SWITCH_RUNNING, "正在切换或同步，请稍候")?;
     let db = db_path()?;
     let (_, ownership_path, backup_dir) = daemon::hub_paths().map_err(|e| e.to_string())?;
     task_unify::rollback(&db, &ownership_path, &backup_dir).map_err(|e| e.to_string())
@@ -159,7 +287,11 @@ fn unify_status() -> Result<task_unify::Ownership, String> {
 
 /// 读取一个会话的正文预览。
 #[tauri::command]
-fn session_detail(id: String) -> Result<transcript::Transcript, String> {
+async fn session_detail(id: String) -> Result<transcript::Transcript, String> {
+    on_blocking(move || session_detail_blocking(&id)).await
+}
+
+fn session_detail_blocking(id: &str) -> Result<transcript::Transcript, String> {
     let tasks = task_index::load_tasks(&db_path()?).map_err(|e| e.to_string())?;
     let task = tasks
         .iter()
@@ -175,7 +307,11 @@ fn session_detail(id: String) -> Result<transcript::Transcript, String> {
 
 /// 扫描最近的限流信号（只读，不改冷却表）。
 #[tauri::command]
-fn scan_limits() -> Result<Vec<rate_limit::LimitSignal>, String> {
+async fn scan_limits() -> Result<Vec<rate_limit::LimitSignal>, String> {
+    on_blocking(scan_limits_blocking).await
+}
+
+fn scan_limits_blocking() -> Result<Vec<rate_limit::LimitSignal>, String> {
     let tasks = task_index::load_tasks(&db_path()?).map_err(|e| e.to_string())?;
     let projects = client_compat::data_root()
         .map_err(|e| e.to_string())?
@@ -314,9 +450,15 @@ fn checkin_overview() -> Result<checkin::CheckinStore, String> {
 
 /// 立即签到。`uid` 为空时处理所有账号。
 #[tauri::command]
-fn checkin_run(app: tauri::AppHandle, uid: Option<String>) -> Result<checkin::CheckinStore, String> {
-    // 手动点击：即使是今天失败过的账号也重试一次
-    run_checkins(Some(&app), uid, true)
+async fn checkin_run(
+    app: tauri::AppHandle,
+    uid: Option<String>,
+) -> Result<checkin::CheckinStore, String> {
+    on_blocking(move || {
+        // 手动点击：即使是今天失败过的账号也重试一次
+        run_checkins(Some(&app), uid, true)
+    })
+    .await
 }
 
 /// 开关自动签到。
@@ -342,7 +484,11 @@ fn profiles_overview() -> Result<profile::ProfileStore, String> {
 
 /// 拉取账号资料。默认只补缺的和超过 7 天的；`force` 时全部重拉。
 #[tauri::command]
-fn profiles_refresh(force: Option<bool>) -> Result<profile::ProfileStore, String> {
+async fn profiles_refresh(force: Option<bool>) -> Result<profile::ProfileStore, String> {
+    on_blocking(move || profiles_refresh_blocking(force)).await
+}
+
+fn profiles_refresh_blocking(force: Option<bool>) -> Result<profile::ProfileStore, String> {
     let path = profile_store_path()?;
     let mut store = profile::ProfileStore::load(&path);
     let now = hub_core::now_secs();
@@ -445,23 +591,26 @@ fn autostart_set(enabled: bool) -> Result<bool, String> {
 /// 这会重启 WorkBuddy，正在跑的任务会被中断。界面上必须先做二次确认。
 /// 每一步都会通过 `switch-progress` 事件推给前端，避免长时间无反馈。
 #[tauri::command]
-fn switch_apply(app: tauri::AppHandle, target: String) -> Result<String, String> {
+async fn switch_apply(app: tauri::AppHandle, target: String) -> Result<String, String> {
+    on_blocking(move || switch_apply_blocking(&app, &target)).await
+}
+
+fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String, String> {
     use tauri::Emitter;
+
+    let _guard = BusyGuard::acquire(&SWITCH_RUNNING, "正在切换账号，请稍候")?;
 
     let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
-    let hits: Vec<_> = accounts
-        .iter()
-        .filter(|a| a.uid.starts_with(target.as_str()))
-        .collect();
-    let account = match hits.len() {
-        0 => return Err(format!("找不到 uid 以 {target} 开头的账号")),
-        1 => hits[0],
-        _ => return Err(format!("{target} 匹配到多个账号，请写长一点")),
-    };
+    let account = match_account(&accounts, target)?;
+
+    // 登录态与有效期要在退出客户端之前判掉
+    let auth_path = client_compat::auth_file().ok_or_else(no_login)?;
+    if account.refresh_expires_at <= hub_core::now_secs() {
+        return Err(expired(&account.uid));
+    }
 
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe")?;
-    let auth_path = client_compat::auth_file().ok_or("找不到凭据文件")?;
 
     let _ = app.emit("switch-progress", "正在读取账号密钥…");
     let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
@@ -484,15 +633,13 @@ fn switch_apply(app: tauri::AppHandle, target: String) -> Result<String, String>
         },
     )?;
 
-    Ok(format!(
-        "已切换到 {}，任务已归集。客户端正在重启。",
-        &account.uid[..8]
-    ))
+    let short = &account.uid[..account.uid.len().min(8)];
+    Ok(format!("已切换到 {short}，任务已归集。客户端正在重启。"))
 }
 
 /// 把 `None` / `"current"` 解析成当前登录账号的 uid。
 fn resolve_target_uid(target: Option<String>) -> Result<String, String> {
-    let auth = client_compat::auth_file().ok_or("找不到凭据文件")?;
+    let auth = client_compat::auth_file().ok_or_else(no_login)?;
     match target.as_deref() {
         None | Some("") | Some("current") => {
             switch_engine::current_uid(&auth).map_err(|e| e.to_string())
@@ -654,7 +801,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(8));
-                    if let Ok(store) = profiles_refresh(None) {
+                    if let Ok(store) = profiles_refresh_blocking(None) {
                         let _ = handle.emit("profiles-updated", store);
                     }
                 });
@@ -690,6 +837,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             probe,
+            auth_state,
             list_tasks,
             list_accounts,
             current_uid,

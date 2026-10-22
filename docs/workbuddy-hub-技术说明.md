@@ -109,9 +109,24 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 
 切号要反复探测客户端是否退出，早期实现每 300ms 调一次 `tasklist`，20 秒超时最多闪 66 次黑框。
 
-现在所有外部命令都通过 `proc::hidden()` 构造，带 `CREATE_NO_WINDOW`，轮询降为 500ms / 15 秒。
+现在所有外部命令都通过 `proc::hidden()` 构造，带 `CREATE_NO_WINDOW`；轮询 500ms，
+优雅退出等 10 秒、启动等 12 秒。
 界面上显示分步进度，不再是空白等待。签到和账号资料用的 `curl` 也走同一个封装 ——
 否则每次刷新资料会闪 9 次黑框。
+
+### IPC 命令不要阻塞主线程
+
+Tauri 的同步 `#[tauri::command]` 在 WebView2 的 IPC 回调里**内联执行**，也就是主线程。
+切号要 taskkill、轮询退出、等客户端启动，同步跑下来窗口直接「未响应」，`switch-progress`
+事件也会排在队列里发不出去 —— 界面停在「准备中…」。
+
+现在所有可能超过几十毫秒的命令都改成 `async fn` + `tauri::async_runtime::spawn_blocking`，
+实现体拆成 `xxx_blocking`，启动线程和 CLI 继续复用同步版本；切号与归集之间用 `BusyGuard`
+互斥，连点两次只会得到「正在切换，请稍候」。
+
+取密钥的子进程另有 8 秒硬超时：超时会 `taskkill /T` 结束整棵进程树（只 kill 直接子进程的话，
+孙进程还握着管道，读取线程会一直 join 到它自己退出），并在失败后结束整个流程。
+成功结果缓存 10 分钟，避免 probe / 签到 / 资料 / 切号各起一次 Electron。
 
 ---
 

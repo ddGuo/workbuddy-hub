@@ -150,3 +150,12 @@ export interface ProfileStore {
   profiles: Record<string, Profile>;
   last_run: number;
 }
+
+export type AuthReason = 'no_auth_file' | 'empty_uid' | 'unreadable';
+
+export interface AuthState {
+  logged_in: boolean;
+  current_uid: string | null;
+  auth_file: string | null;
+  reason: AuthReason | null;
+}

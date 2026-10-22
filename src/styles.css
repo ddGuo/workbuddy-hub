@@ -469,6 +469,43 @@ input {
   letter-spacing: 0;
 }
 
+.rail-banner {
+  margin: 0 10px 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  background: var(--warn-soft);
+}
+
+.rail-banner p {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.rail-banner .btn {
+  width: 100%;
+}
+
+.rail-empty {
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.rail-empty p {
+  margin: 0 0 3px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.rail-empty .btn {
+  margin-top: 10px;
+}
+
 .rail-list {
   flex: 1;
   min-height: 0;
@@ -492,6 +529,20 @@ input {
 
 .account:hover {
   background: var(--surface-2);
+}
+
+.account.expired .avatar {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.account.expired .acct-label {
+  color: var(--ink-3);
+}
+
+.expired-text {
+  color: var(--err);
+  font-size: 10.5px;
 }
 
 .account.current {

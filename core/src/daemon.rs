@@ -126,6 +126,30 @@ pub fn pick_next(
         .cloned()
 }
 
+/// 目标账号不具备切换条件的原因。
+#[derive(Debug, PartialEq, Eq)]
+pub enum SwitchDenied {
+    /// 客户端没有任何登录态（auth 文件不存在），无处写入凭据
+    NoLogin,
+    /// 目标账号的刷新令牌已过期
+    Expired,
+}
+
+/// 切换前的硬性检查：必须有登录态，且目标凭据未过期。
+pub fn check_switchable(
+    target: &crate::account_store::Account,
+    auth_file: Option<&Path>,
+    now: i64,
+) -> Result<(), SwitchDenied> {
+    if auth_file.is_none() {
+        return Err(SwitchDenied::NoLogin);
+    }
+    if target.refresh_expires_at <= now {
+        return Err(SwitchDenied::Expired);
+    }
+    Ok(())
+}
+
 /// 一次完整的换号动作。调用方负责确保此刻没有任务在跑。
 ///
 /// 顺序：退出客户端 → 写凭据 → 归集任务 → 启动客户端。
@@ -144,8 +168,11 @@ pub fn switch_now(
     mut report: impl FnMut(&str),
 ) -> Result<(), String> {
     report("正在退出客户端…");
-    client_control::quit(std::time::Duration::from_secs(15))
+    let graceful = client_control::quit(client_control::QUIT_TIMEOUT)
         .map_err(|e| format!("退出客户端失败：{e}"))?;
+    if !graceful {
+        report("客户端未正常退出，已强制结束");
+    }
 
     report("正在写入凭据…");
     crate::switch_engine::apply(target, at_rest, auth_path, backup_dir, false)
@@ -158,8 +185,8 @@ pub fn switch_now(
     report("正在启动客户端…");
     client_control::start(exe).map_err(|e| format!("启动客户端失败：{e}"))?;
 
-    report("等待客户端就绪…");
-    let ok = client_control::wait_started(std::time::Duration::from_secs(20));
+    report("等待客户端启动…");
+    let ok = client_control::wait_started(client_control::START_TIMEOUT);
     report(if ok { "切换完成" } else { "已切换，但客户端启动较慢，请稍候" });
     Ok(())
 }
@@ -188,6 +215,30 @@ mod tests {
             "c-Users-Administrator-WorkBuddy-2026-06-29-15-31-17"
         );
         assert_eq!(encode_cwd(r"D:\workbuddy_p\yuyin"), "d-workbuddy_p-yuyin");
+    }
+
+    #[test]
+    fn switch_requires_login_and_valid_credential() {
+        let acct = |exp: i64| crate::account_store::Account {
+            uid: "u".into(),
+            file: "f.json".into(),
+            path: std::path::PathBuf::new(),
+            domain: "www.workbuddy.cn".into(),
+            expires_at: 0,
+            refresh_expires_at: exp,
+            doc: serde_json::Value::Null,
+        };
+        let auth = Path::new("workbuddy-desktop.info");
+
+        assert_eq!(
+            check_switchable(&acct(2000), None, 1000),
+            Err(SwitchDenied::NoLogin)
+        );
+        assert_eq!(
+            check_switchable(&acct(1000), Some(auth), 1000),
+            Err(SwitchDenied::Expired)
+        );
+        assert!(check_switchable(&acct(2000), Some(auth), 1000).is_ok());
     }
 
     #[test]

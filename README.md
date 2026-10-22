@@ -356,6 +356,15 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 
 如果还遇到：任务管理器里结束 `workbuddy-hub.exe`（连带残留的 `msedgewebview2.exe`）再打开。
 
+**切换账号时窗口「未响应」。**
+已修（0.1.5）：同步 Tauri 命令原本在主线程执行，切号里的退出等待和启动等待加起来最坏几十秒，
+窗口自然不响应。现在这些命令都跑在 `spawn_blocking` 线程池，进度条会一步步更新。
+
+**客户端退出登录后点切换，提示「找不到凭据文件」。**
+已改为「客户端未登录，请先在 WorkBuddy 客户端登录至少一个账号」，账号栏顶部同步给出提示和
+「打开客户端」入口；历史账号仍会显示，只是切换按钮禁用。凭据本身没有失效，登录任意一个账号后，
+切回来 500ms 内自动恢复。
+
 **`cargo build` 报 TLS / 502。**
 本机代理会拒绝 crates.io，需要配镜像（`~/.cargo/config.toml` 指向 rsproxy）。
 

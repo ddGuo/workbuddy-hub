@@ -17,6 +17,28 @@ use std::time::{Duration, Instant};
 /// 轮询间隔。
 const POLL: Duration = Duration::from_millis(500);
 
+/// 请求客户端正常退出的等待时间。正常 Electron 退出 1–3 秒。
+pub const QUIT_TIMEOUT: Duration = Duration::from_secs(10);
+/// 强制结束后的等待时间。
+pub const FORCE_WAIT: Duration = Duration::from_secs(3);
+/// 等客户端启动的时间。主窗口通常 3–6 秒出现。
+pub const START_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// 反复探测直到成立或超时。`POLL` 与剩余时间取小，短超时的单测也能快速返回。
+fn wait_until(mut probe: impl FnMut() -> bool, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if probe() {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        sleep(POLL.min(remaining));
+    }
+}
+
 /// 客户端是否在运行。
 pub fn is_running() -> bool {
     #[cfg(target_os = "windows")]
@@ -24,13 +46,17 @@ pub fn is_running() -> bool {
         proc::hidden("tasklist")
             .args(["/FI", "IMAGENAME eq WorkBuddy.exe", "/NH"])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("WorkBuddy.exe"))
+            .map(|o| output_has_client(&o.stdout))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
     {
         false
     }
+}
+
+fn output_has_client(bytes: &[u8]) -> bool {
+    String::from_utf8_lossy(bytes).contains("WorkBuddy.exe")
 }
 
 /// 请求客户端退出，并等待它真的消失。
@@ -47,23 +73,16 @@ pub fn quit(timeout: Duration) -> Result<bool> {
         let _ = proc::run_hidden("taskkill", &["/IM", "WorkBuddy.exe", "/T"]);
     }
 
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        sleep(POLL);
-        if !is_running() {
-            return Ok(true);
-        }
+    if wait_until(|| !is_running(), timeout) {
+        return Ok(true);
     }
 
     #[cfg(target_os = "windows")]
     {
         let _ = proc::run_hidden("taskkill", &["/F", "/IM", "WorkBuddy.exe", "/T"]);
     }
-    for _ in 0..10 {
-        sleep(POLL);
-        if !is_running() {
-            return Ok(false);
-        }
+    if wait_until(|| !is_running(), FORCE_WAIT) {
+        return Ok(false);
     }
     bail!("无法结束 WorkBuddy 进程");
 }
@@ -81,12 +100,37 @@ pub fn start(exe: &Path) -> Result<()> {
 
 /// 等客户端进程出现。
 pub fn wait_started(timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if is_running() {
-            return true;
-        }
-        sleep(POLL);
+    wait_until(is_running, timeout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_until_succeeds_after_retry() {
+        let mut calls = 0;
+        assert!(wait_until(
+            || {
+                calls += 1;
+                calls >= 2
+            },
+            Duration::from_millis(800)
+        ));
     }
-    false
+
+    #[test]
+    fn wait_until_times_out() {
+        let started = Instant::now();
+        assert!(!wait_until(|| false, Duration::from_millis(60)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn detects_client_in_tasklist_output() {
+        let hit = br#""WorkBuddy.exe","1234","Console","1","120,000 K""#;
+        let miss = b"INFO: No tasks are running which match the specified criteria.";
+        assert!(output_has_client(hit));
+        assert!(!output_has_client(miss));
+    }
 }

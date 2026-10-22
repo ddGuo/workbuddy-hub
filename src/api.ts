@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   AccountSummary,
+  AuthState,
   CheckinRecord,
   CheckinStore,
   LimitSignal,
@@ -249,6 +250,36 @@ export async function checkinOverview(): Promise<CheckinStore> {
 export async function checkinRun(uid?: string): Promise<CheckinStore> {
   if (!isTauri) return MOCK_CHECKIN;
   return invoke<CheckinStore>('checkin_run', { uid: uid ?? null });
+}
+
+const MOCK_AUTH: AuthState = {
+  logged_in: true,
+  current_uid: 'db0427fd-b175-497c-85a0-c01d8f35cb13',
+  auth_file: 'mock://workbuddy-desktop.info',
+  reason: null,
+};
+
+export async function authState(): Promise<AuthState> {
+  if (!isTauri) return MOCK_AUTH;
+  return invoke<AuthState>('auth_state');
+}
+
+export const ERR_NO_LOGIN = 'NO_LOGIN:';
+export const ERR_EXPIRED = 'EXPIRED:';
+
+/** 后端用前缀区分「未登录 / 凭据过期」，这里统一拆成可判断的结构。 */
+export function describeError(e: unknown): {
+  code: 'no_login' | 'expired' | null;
+  text: string;
+} {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (raw.startsWith(ERR_NO_LOGIN)) {
+    return { code: 'no_login', text: raw.slice(ERR_NO_LOGIN.length) };
+  }
+  if (raw.startsWith(ERR_EXPIRED)) {
+    return { code: 'expired', text: raw.slice(ERR_EXPIRED.length) };
+  }
+  return { code: null, text: raw };
 }
 
 export async function checkinSetAuto(enabled: boolean): Promise<CheckinStore> {
