@@ -132,13 +132,18 @@ pub fn fetch(domain: &str, token: &str, uid: &str) -> Result<Profile> {
 }
 
 /// `19912349283` → `199****9283`。位数不足时返回空串，调用方回退到昵称 / uid。
+///
+/// 超过 11 位时取后 11 位：`+86 199-1234-9283` 这种带国际区号的写法，
+/// 直接取前 3 位会变成 `861****9283`。
 pub fn mask_phone(raw: &str) -> String {
     let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.len() < 7 {
+    let n = digits.len();
+    let local: &str = if n > 11 { &digits[n - 11..] } else { &digits };
+    if local.len() < 7 {
         return String::new();
     }
-    let head: String = digits.chars().take(3).collect();
-    let tail: String = digits
+    let head: String = local.chars().take(3).collect();
+    let tail: String = local
         .chars()
         .rev()
         .take(4)
