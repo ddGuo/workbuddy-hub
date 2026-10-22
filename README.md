@@ -319,9 +319,10 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 Git 自带的 `usr/bin/link.exe` 会抢在 MSVC 链接器前面，把 MSVC 的
 `bin/Hostx64/x64` 放到 PATH 最前面。
 
-**切号时闪过一串黑框。**
-已修：所有外部命令都通过 `hub_core::proc::hidden()` 构造，带 `CREATE_NO_WINDOW`；
-轮询间隔 500ms / 15 秒超时。
+**启动或切号时闪过一串黑框。**
+已修：所有外部命令（`tasklist` / `taskkill` / `powershell` / `curl`）都通过
+`hub_core::proc::hidden()` 构造，带 `CREATE_NO_WINDOW`。启动时账号资料和签到
+各要发 9 次 `curl`，同样不会闪窗。
 
 **签到全部失败。**
 先 `hub checkin --status` 看服务端返回。常见原因是账号凭据过期（客户端重新登录一次即可），

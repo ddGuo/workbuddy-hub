@@ -10,7 +10,7 @@
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// 发一个请求，返回 (HTTP 状态码, 解析后的 JSON)。
 ///
@@ -35,7 +35,8 @@ pub fn send(
     }
     config.push_str("write-out = \"\\n%{http_code}\"\n");
 
-    let mut child = Command::new("curl")
+    // 必须走 proc::hidden：否则每发一个请求都会闪一次 cmd 窗口
+    let mut child = crate::proc::hidden("curl")
         .args(["-K", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

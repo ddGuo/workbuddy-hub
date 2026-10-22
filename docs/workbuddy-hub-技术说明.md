@@ -109,7 +109,9 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 
 切号要反复探测客户端是否退出，早期实现每 300ms 调一次 `tasklist`，20 秒超时最多闪 66 次黑框。
 
-现在所有外部命令都通过 `proc::hidden()` 构造，带 `CREATE_NO_WINDOW`，轮询降为 500ms / 15 秒。界面上显示分步进度，不再是空白等待。
+现在所有外部命令都通过 `proc::hidden()` 构造，带 `CREATE_NO_WINDOW`，轮询降为 500ms / 15 秒。
+界面上显示分步进度，不再是空白等待。签到和账号资料用的 `curl` 也走同一个封装 ——
+否则每次刷新资料会闪 9 次黑框。
 
 ---
 
