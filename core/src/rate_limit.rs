@@ -13,9 +13,11 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// 限流的影响范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,7 +96,10 @@ pub fn classify(text: &str) -> Option<(LimitKind, Option<i64>)> {
         || lower.contains("too many requests")
         || lower.contains("overloaded_error");
     // 「可以切换其他模型」是模型级的强特征：正常解释功能时不会整句这么写
-    let model_hint = text.contains("切换其他模型") || text.contains("切换模型继续");
+    let model_hint = text.contains("切换其他模型")
+        || text.contains("切换至其他模型")
+        || text.contains("切换模型继续")
+        || text.contains("您可先切换");
 
     if !(is_429 || credit || rate || model_hint) {
         return None;
@@ -123,12 +128,17 @@ fn starts_with_status(text: &str, code: &str) -> bool {
 
 /// 解析「将在 2026-10-19 09:56:23 UTC+8 重置」里的时间。
 pub fn parse_reset_time(text: &str) -> Option<i64> {
-    let marker = "将在";
-    let start = text.find(marker)? + marker.len();
-    let rest = text[start..].trim_start();
-    let candidate: String = rest.chars().take(19).collect();
-    let ts = parse_utc8_datetime(&candidate)?;
-    Some(ts)
+    // 两种措辞：「将在 2026-10-19 09:56:23 …重置」/「可在 2026-10-23 09:51:21 重置后使用」
+    for marker in ["将在", "可在"] {
+        if let Some(pos) = text.find(marker) {
+            let rest = text[pos + marker.len()..].trim_start();
+            let candidate: String = rest.chars().take(19).collect();
+            if let Some(ts) = parse_utc8_datetime(&candidate) {
+                return Some(ts);
+            }
+        }
+    }
+    None
 }
 
 /// `YYYY-MM-DD HH:MM:SS` 按 UTC+8 解释，返回 unix 秒。
@@ -241,6 +251,44 @@ pub fn scan_session(jsonl: &Path, session_id: &str, uid: &str) -> Result<Option<
     Ok(None)
 }
 
+/// 扫描缓存：jsonl 没变化就不重复解析。
+///
+/// 后台每 5 秒轮询一次，22 个会话文件全量读太浪费；按 mtime 命中缓存后，
+/// 一轮只剩 stat 的开销。uid 参与 key：切号后归属变了要重新生成 signal。
+type CacheKey = (PathBuf, String);
+static SCAN_CACHE: OnceLock<Mutex<HashMap<CacheKey, (u128, Option<LimitSignal>)>>> = OnceLock::new();
+
+pub fn scan_session_cached(
+    jsonl: &Path,
+    session_id: &str,
+    uid: &str,
+) -> Result<Option<LimitSignal>> {
+    let Some(stamp) = std::fs::metadata(jsonl)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+    else {
+        return Ok(None);
+    };
+
+    let key = (jsonl.to_path_buf(), uid.to_string());
+    let cache = SCAN_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((cached_stamp, sig)) = guard.get(&key) {
+            if *cached_stamp == stamp {
+                return Ok(sig.clone());
+            }
+        }
+    }
+
+    let sig = scan_session(jsonl, session_id, uid)?;
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, (stamp, sig.clone()));
+    }
+    Ok(sig)
+}
+
 fn truncate(s: &str, n: usize) -> String {
     let t = s.trim();
     if t.chars().count() <= n {
@@ -263,6 +311,17 @@ mod tests {
         let ts = reset.expect("应解析出重置时间");
         // 2026-10-19 09:56:23 UTC+8 == 2026-10-19 01:56:23 UTC
         assert_eq!(ts, 1792374983);
+    }
+
+    #[test]
+    fn model_level_with_shorter_wording() {
+        // 客户端实际返回的另一版措辞
+        let text = "抱歉，发生未知错误暂无响应。您可以稍后再试，或尝试新建任务、切换模型\n\
+                    当前您在Deepseek-V4.1-Flash模型的使用量已超出频率限制，\
+                    可在2026-10-23 09:51:21重置后使用。您可先切换至其他模型。";
+        let (kind, reset) = classify(text).expect("应识别为限流");
+        assert_eq!(kind, LimitKind::Model);
+        assert_eq!(reset, parse_utc8_datetime("2026-10-23 09:51:21"));
     }
 
     #[test]

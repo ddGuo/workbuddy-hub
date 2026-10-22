@@ -22,6 +22,27 @@ pub fn send(
     headers: &[(String, String)],
     body: Option<&str>,
 ) -> Result<(u16, Value)> {
+    let (code, text) = send_raw(method, url, headers, body)?;
+    let value: Value = serde_json::from_str(&text)
+        .with_context(|| format!("响应不是 JSON（HTTP {code}）：{}", first_line(&text)))?;
+
+    if code >= 400 {
+        let msg = value
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("请求被拒绝");
+        bail!("HTTP {code} · {msg}");
+    }
+    Ok((code, value))
+}
+
+/// 只返回状态码与原始正文，4xx 不当作失败 —— 探测限流时要看服务端原话。
+pub fn send_raw(
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&str>,
+) -> Result<(u16, String)> {
     let mut config = format!(
         "url = \"{}\"\nrequest = \"{}\"\nsilent\nshow-error\nmax-time = 20\n",
         esc(url),
@@ -65,18 +86,7 @@ pub fn send(
     if code == 0 {
         bail!("没有拿到 HTTP 状态码");
     }
-
-    let value: Value = serde_json::from_str(body)
-        .with_context(|| format!("响应不是 JSON（HTTP {code}）：{}", first_line(body)))?;
-
-    if code >= 400 {
-        let msg = value
-            .get("msg")
-            .and_then(Value::as_str)
-            .unwrap_or("请求被拒绝");
-        bail!("HTTP {code} · {msg}");
-    }
-    Ok((code, value))
+    Ok((code, body.to_string()))
 }
 
 /// 账号接口的标准请求头。`X-Device-Token` 是客户端 Turing SDK 的反爬头，

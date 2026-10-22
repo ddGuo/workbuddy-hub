@@ -3,6 +3,7 @@ import type {
   AccountSummary,
   AuthState,
   CreditStore,
+  ProbeResult,
   CheckinRecord,
   CheckinStore,
   LimitSignal,
@@ -141,6 +142,19 @@ export async function unifyRollback(): Promise<number> {
 export async function unifyStatus(): Promise<Ownership> {
   if (!isTauri) return { version: 1, unified_to: null, sessions: {}, updated_at: 0 };
   return invoke<Ownership>('unify_status');
+}
+
+export async function probeModel(uid: string, model: string): Promise<ProbeResult> {
+  if (!isTauri) {
+    return {
+      model,
+      limited: true,
+      http_status: 429,
+      message: '（预览模式）模拟：使用量已超出频率限制',
+      reset_at: Math.floor(Date.now() / 1000) + 3600,
+    };
+  }
+  return invoke<ProbeResult>('probe_model', { uid, model });
 }
 
 export async function scanLimits(): Promise<LimitSignal[]> {

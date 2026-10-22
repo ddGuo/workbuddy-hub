@@ -11,6 +11,7 @@ import {
   authState,
   creditsOverview,
   creditsRefresh,
+  probeModel,
   syncAccounts,
   describeError,
   isTauri,
@@ -39,6 +40,7 @@ import type {
   Ownership,
   AuthState,
   CreditStore,
+  LimitAlert,
   Probe,
   ProfileStore,
   SwitchPlan,
@@ -138,6 +140,26 @@ export default function App() {
   const [profiles, setProfiles] = useState<ProfileStore | null>(null);
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [credits, setCredits] = useState<CreditStore | null>(null);
+  const [alert, setAlert] = useState<LimitAlert | null>(() => {
+    // 浏览器预览用：?alert=1 直接展示右下角提醒
+    if (isTauri) return null;
+    if (new URLSearchParams(window.location.search).get('alert') !== '1') return null;
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      signal: {
+        session_id: 'preview',
+        uid: '128a8f9c-9167-46e5-86e7-a61fa5e766ce',
+        message: '429 您的使用量已超出频率限制，将在之后重置，您也可以切换其他模型继续使用。',
+        kind: 'model',
+        model: 'deepseek-v4.1-flash',
+        reset_at: now + 1800,
+        detected_at: now,
+      },
+      next_uid: '438b979e-2c4f-4b21-983c-d2e0081ce5b5',
+    };
+  });
+  const [quickSwitching, setQuickSwitching] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
   const [cardsOpen, setCardsOpen] = useState(
     () => localStorage.getItem('hub.cardsOpen') !== '0',
   );
@@ -180,6 +202,20 @@ export default function App() {
     // 后台签到/积分刷新完成后推一次整份记录
     const un5 = listen<CheckinStore>('checkin-updated', (e) => setCheckin(e.payload));
     const un6 = listen<CreditStore>('credits-updated', (e) => setCredits(e.payload));
+    // 后台每 5 秒扫一次会话，发现新限流立刻提醒
+    const un7 = listen<LimitAlert>('limit-detected', (e) => {
+      setAlert(e.payload);
+      setLimits((prev) => {
+        const rest = prev.filter(
+          (l) =>
+            !(
+              l.session_id === e.payload.signal.session_id &&
+              l.detected_at === e.payload.signal.detected_at
+            ),
+        );
+        return [e.payload.signal, ...rest];
+      });
+    });
     progressRef.current = () => {
       void un1.then((f) => f());
       void un2.then((f) => f());
@@ -187,6 +223,7 @@ export default function App() {
       void un4.then((f) => f());
       void un5.then((f) => f());
       void un6.then((f) => f());
+      void un7.then((f) => f());
     };
     return () => {
       progressRef.current?.();
@@ -484,6 +521,71 @@ export default function App() {
       localStorage.setItem('hub.cardsOpen', open ? '0' : '1');
       return !open;
     });
+  }
+
+  /** 该账号当前仍在限流的模型，用于切换按钮的 tooltip。 */
+  function limitTip(uid: string): string {
+    const now = Date.now() / 1000;
+    return limits
+      .filter((l) => l.uid === uid && (l.reset_at == null || l.reset_at > now))
+      .map((l) =>
+        l.kind === 'account'
+          ? `账号额度 · ${l.reset_at ? `${fmtTime(l.reset_at)} 恢复` : '限流中'}`
+          : `${l.model ?? '单模型'} · ${l.reset_at ? `${fmtTime(l.reset_at)} 恢复` : '限流中'}`,
+      )
+      .join('\n');
+  }
+
+  /** 点通知直接切号；有任务在跑时退回确认弹窗，避免直接打断。 */
+  async function quickSwitch(uid: string) {
+    const blocked = switchBlockReason(accountMap.get(uid));
+    if (blocked) {
+      setToast({ kind: 'err', text: blocked });
+      return;
+    }
+    if (tasks.some((t) => t.status === 'working')) {
+      setAlert(null);
+      await openSwitchDialog(uid);
+      return;
+    }
+    setAlert(null);
+    setQuickSwitching(labelOf(uid));
+    setProgress('准备中…');
+    try {
+      const msg = await switchApply(uid);
+      setToast({ kind: 'ok', text: msg });
+      await load();
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    } finally {
+      setQuickSwitching(null);
+      setProgress('');
+    }
+  }
+
+  async function verifyAlert() {
+    if (!alert?.signal.model) return;
+    setProbing(true);
+    try {
+      const r = await probeModel(alert.signal.uid, alert.signal.model);
+      if (r.limited) {
+        setAlert({
+          ...alert,
+          signal: {
+            ...alert.signal,
+            message: r.message || alert.signal.message,
+            reset_at: r.reset_at ?? alert.signal.reset_at,
+          },
+        });
+        setToast({ kind: 'err', text: `确认限流：${r.message || '服务端返回 429'}` });
+      } else {
+        setToast({ kind: 'ok', text: `${r.model} 当前可用（HTTP ${r.http_status}）` });
+      }
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    } finally {
+      setProbing(false);
+    }
   }
 
   async function handleOpenClient() {
@@ -827,14 +929,18 @@ export default function App() {
                     {a.isCurrent ? (
                       <span className="current-tag">当前</span>
                     ) : (
-                      <button
-                        className="mini"
-                        disabled={blocked !== null}
-                        title={blocked ?? undefined}
-                        onClick={() => void openSwitchDialog(a.uid)}
+                      <span
+                        className="switch-wrap"
+                        title={[blocked, limitTip(a.uid)].filter(Boolean).join('\n') || undefined}
                       >
-                        切换
-                      </button>
+                        <button
+                          className="mini"
+                          disabled={blocked !== null}
+                          onClick={() => void openSwitchDialog(a.uid)}
+                        >
+                          切换
+                        </button>
+                      </span>
                     )}
                   </div>
                 );
@@ -1104,6 +1210,64 @@ export default function App() {
           onClose={() => setDetail(null)}
           onOpenFolder={(p) => void openFolder(p)}
         />
+      )}
+
+      {alert && (
+        <div className="limit-toast" role="alert">
+          <div className="limit-toast-head">
+            <b>账号被限流</b>
+            <button className="mini" onClick={() => setAlert(null)} title="关闭">
+              ×
+            </button>
+          </div>
+          <p className="limit-toast-body">
+            <code>{labelOf(alert.signal.uid)}</code>
+            <span className="sep">·</span>
+            {alert.signal.kind === 'account'
+              ? '账号额度'
+              : (alert.signal.model ?? '单模型')}
+            {alert.signal.reset_at ? (
+              <>
+                <span className="sep">·</span>
+                {fmtTime(alert.signal.reset_at)} 恢复
+              </>
+            ) : null}
+          </p>
+          <div className="limit-toast-actions">
+            {alert.next_uid && (
+              <button
+                className="btn primary sm"
+                onClick={() => void quickSwitch(alert.next_uid!)}
+              >
+                切换到 {labelOf(alert.next_uid)}
+              </button>
+            )}
+            {alert.signal.model && (
+              <button className="btn sm" disabled={probing} onClick={() => void verifyAlert()}>
+                {probing ? '检测中…' : '验证'}
+              </button>
+            )}
+            <button className="btn sm" onClick={() => setAlert(null)}>
+              忽略
+            </button>
+          </div>
+        </div>
+      )}
+
+      {quickSwitching && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="modal-body">
+              <div className="switching">
+                <div className="switch-spinner" />
+                <p className="switch-step">{progress || '正在切换…'}</p>
+                <p className="switch-hint">
+                  切换到 {quickSwitching}，客户端会关闭并重新打开，约 10 秒。
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {dialog && (

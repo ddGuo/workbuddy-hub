@@ -109,7 +109,7 @@ pub fn scan(
         let jsonl = projects_dir
             .join(encode_cwd(&t.cwd))
             .join(format!("{}.jsonl", t.id));
-        if let Ok(Some(mut sig)) = rate_limit::scan_session(&jsonl, &t.id, &t.uid) {
+        if let Ok(Some(mut sig)) = rate_limit::scan_session_cached(&jsonl, &t.id, &t.uid) {
             if sig.detected_at == 0 {
                 sig.detected_at = t.updated_at;
             }

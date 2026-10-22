@@ -1,12 +1,20 @@
 use hub_core::{
-    account_store, auth_crypto::AtRestKey, checkin, client_compat, credit, daemon, profile,
-    rate_limit, switch_engine, task_index, task_unify, transcript,
+    account_store, auth_crypto::AtRestKey, auth_seen, checkin, client_compat, credit, daemon,
+    model_probe, profile, rate_limit, switch_engine, task_index, task_unify, transcript,
 };
 use serde::Serialize;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// `sync_accounts` 的返回：当前账号 uid，以及从旧版 DSH 导入了几条。
+/// 新限流事件：推给界面做右下角提醒。
+#[derive(Serialize, Clone)]
+pub struct LimitAlert {
+    signal: rate_limit::LimitSignal,
+    /// 建议切换到的账号（已经过滤掉当前账号与被限流账号）
+    next_uid: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct SyncAccountsOut {
     current: Option<String>,
@@ -342,7 +350,16 @@ fn scan_limits_blocking() -> Result<Vec<rate_limit::LimitSignal>, String> {
     let mut state = daemon::RuntimeState::load(&runtime_path);
     // 用一份临时状态扫，避免把界面上的「看一眼」变成「已处理」
     state.handled.clear();
-    Ok(daemon::scan(&tasks, &projects, &mut state))
+    let mut signals = daemon::scan(&tasks, &projects, &mut state);
+
+    // 切号时任务会被归集到新账号，旧限流不该算到新账号头上：
+    // 只保留发生在「当前账号生效之后」的信号。
+    if let Some(seen) = client_compat::auth_file()
+        .and_then(|p| auth_seen::refresh(&p).ok().flatten())
+    {
+        signals.retain(|s| !(s.uid == seen.uid && s.detected_at < seen.since));
+    }
+    Ok(signals)
 }
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -463,6 +480,34 @@ fn run_checkins(
 fn credits_store_path() -> Result<std::path::PathBuf, String> {
     let hub = client_compat::hub_dir().map_err(|e| e.to_string())?;
     Ok(hub.join("credits.json"))
+}
+
+/// 用账号凭据 + 指定模型发一次最小请求，直接问服务端是否限流。
+#[tauri::command]
+async fn probe_model(uid: String, model: String) -> Result<model_probe::ProbeResult, String> {
+    on_blocking(move || probe_model_blocking(&uid, &model)).await
+}
+
+fn probe_model_blocking(uid: &str, model: &str) -> Result<model_probe::ProbeResult, String> {
+    let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
+    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    let key = AtRestKey::from_secret(&secret);
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
+    let account = accounts
+        .iter()
+        .find(|a| a.uid.starts_with(uid))
+        .ok_or_else(|| format!("找不到 uid 以 {uid} 开头的账号"))?;
+    if account.refresh_expires_at <= hub_core::now_secs() {
+        return Err(expired(&account.uid));
+    }
+    let token = account.access_token(&key).map_err(|e| e.to_string())?;
+    let creds = checkin::Credentials {
+        token: &token,
+        uid: &account.uid,
+        domain: &account.domain,
+    };
+    model_probe::probe(&creds, model).map_err(|e| e.to_string())
 }
 
 /// 剩余积分缓存（只读本地文件）。
@@ -890,6 +935,70 @@ pub fn run() {
                 });
             }
 
+            // 限流监听：每 5 秒扫一次最近会话（有 mtime 缓存，基本只剩 stat），
+            // 发现新的限流就推给界面做右下角提醒。
+            {
+                use std::collections::HashSet;
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let mut seen: HashSet<String> = HashSet::new();
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        let Ok(db) = db_path() else { continue };
+                        let Ok(tasks) = task_index::load_tasks(&db) else { continue };
+                        let Ok(projects) = client_compat::data_root().map(|r| r.join("projects"))
+                        else {
+                            continue;
+                        };
+                        let Ok((runtime_path, _, _)) = daemon::hub_paths() else {
+                            continue;
+                        };
+                        let mut state = daemon::RuntimeState::load(&runtime_path);
+                        state.handled.clear();
+                        let signals = daemon::scan(&tasks, &projects, &mut state);
+
+                        let seen_auth = client_compat::auth_file()
+                            .and_then(|p| auth_seen::refresh(&p).ok().flatten());
+                        let accounts = client_compat::accounts_dir()
+                            .ok()
+                            .and_then(|d| account_store::load(&d).ok())
+                            .unwrap_or_default();
+                        let now = hub_core::now_secs();
+                        let current = seen_auth
+                            .as_ref()
+                            .map(|s| s.uid.clone())
+                            .unwrap_or_default();
+
+                        for sig in signals {
+                            if let Some(s) = &seen_auth {
+                                if sig.uid == s.uid && sig.detected_at < s.since {
+                                    continue;
+                                }
+                            }
+                            // 只提醒刚发生的，避免启动时把历史全弹一遍
+                            if now - sig.detected_at > 600 {
+                                continue;
+                            }
+                            let key = format!("{}@{}", sig.session_id, sig.detected_at);
+                            if !seen.insert(key) {
+                                continue;
+                            }
+                            let next_uid = daemon::pick_next(&accounts, &state, &current, now)
+                                .filter(|a| a.uid != sig.uid)
+                                .map(|a| a.uid);
+                            let _ = handle.emit(
+                                "limit-detected",
+                                LimitAlert {
+                                    signal: sig,
+                                    next_uid,
+                                },
+                            );
+                        }
+                    }
+                });
+            }
+
             // 客户端登录新账号时自动存档：轮询凭据文件的 mtime，
             // 变化就把它写进 hub 自己的账号库，并通知前端刷新列表。
             {
@@ -979,6 +1088,7 @@ pub fn run() {
             checkin_overview,
             credits_overview,
             credits_refresh,
+            probe_model,
             checkin_run,
             checkin_set_auto,
             profiles_overview,

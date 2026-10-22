@@ -8,6 +8,7 @@
 
 pub mod account_store;
 pub mod auth_crypto;
+pub mod auth_seen;
 pub mod checkin;
 pub mod credit;
 pub mod client_compat;
@@ -16,6 +17,7 @@ pub mod daemon;
 pub mod http;
 pub mod proc;
 pub mod profile;
+pub mod model_probe;
 pub mod rate_limit;
 pub mod switch_engine;
 pub mod task_index;

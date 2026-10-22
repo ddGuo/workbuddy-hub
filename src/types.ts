@@ -83,6 +83,20 @@ export interface LimitSignal {
   model?: string | null;
 }
 
+export interface LimitAlert {
+  signal: LimitSignal;
+  /** 建议切换到的账号（null 表示没有可用账号） */
+  next_uid: string | null;
+}
+
+export interface ProbeResult {
+  model: string;
+  limited: boolean;
+  http_status: number;
+  message: string;
+  reset_at: number | null;
+}
+
 export interface TranscriptEntry {
   ts: number;
   kind: 'user' | 'assistant' | 'tool' | 'tool_result';

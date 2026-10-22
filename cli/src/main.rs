@@ -9,6 +9,7 @@ use hub_core::account_store::{self, Account};
 use hub_core::auth_crypto::{self, AtRestKey};
 use hub_core::checkin;
 use hub_core::credit;
+use hub_core::model_probe;
 use hub_core::client_compat;
 use hub_core::daemon;
 use hub_core::profile;
@@ -37,6 +38,7 @@ fn main() -> Result<()> {
         "transcript" => cmd_transcript(&args[1..]),
         "checkin" => cmd_checkin(&args[1..]),
         "credits" => cmd_credits(&args[1..]),
+        "probe-model" => cmd_probe_model(&args[1..]),
         "profile" => cmd_profile(&args[1..]),
         "authhash" => cmd_authhash(),
         "enc-test" => cmd_enc_test(),
@@ -67,6 +69,7 @@ fn print_help() {
     println!("  transcript 预览会话正文：hub transcript <session-id 前缀> [--tail N]");
     println!("  checkin    每日签到：hub checkin [--status] [--force-claim] [--raw] [--uid <前缀>]");
     println!("  credits    剩余积分：hub credits [--raw] [--uid <前缀>]");
+    println!("  probe-model 探测模型限流：hub probe-model --uid <前缀> --model <id>");
     println!("  profile    读取账号资料（昵称 / 脱敏手机号）：hub profile [--uid <前缀>]");
     println!("  authhash   输出客户端凭据的哈希，用于与 TS 实现对拍");
 }
@@ -397,6 +400,50 @@ fn cmd_profile(args: &[String]) -> Result<()> {
 }
 
 /// 每日签到：先用 --status 看一眼，再决定要不要真签。
+fn cmd_probe_model(args: &[String]) -> Result<()> {
+    let uid = args
+        .windows(2)
+        .find(|w| w[0] == "--uid")
+        .map(|w| w[1].clone())
+        .context("用法：hub probe-model --uid <前缀> --model <模型 id>")?;
+    let model = args
+        .windows(2)
+        .find(|w| w[0] == "--model")
+        .map(|w| w[1].clone())
+        .context("缺少 --model")?;
+
+    let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
+    let secret = client_compat::at_rest_secret(&exe)?;
+    let key = AtRestKey::from_secret(&secret);
+    let accounts = account_store::load(&client_compat::accounts_dir()?)?;
+    let account = accounts
+        .iter()
+        .find(|a| a.uid.starts_with(uid.as_str()))
+        .context("找不到匹配的账号")?;
+    let token = account.access_token(&key)?;
+    let creds = checkin::Credentials {
+        token: &token,
+        uid: &account.uid,
+        domain: &account.domain,
+    };
+
+    let r = model_probe::probe(&creds, &model)?;
+    println!(
+        "{} · {} → HTTP {} · {}",
+        &account.uid[..8.min(account.uid.len())],
+        r.model,
+        r.http_status,
+        if r.limited { "限流" } else { "正常" }
+    );
+    if !r.message.is_empty() {
+        println!("  {}", r.message);
+    }
+    if let Some(t) = r.reset_at {
+        println!("  重置: {}", format_ts(t));
+    }
+    Ok(())
+}
+
 fn cmd_credits(args: &[String]) -> Result<()> {
     let raw = args.iter().any(|a| a == "--raw");
     let uid_filter = args
