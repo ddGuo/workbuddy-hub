@@ -14,6 +14,7 @@ import {
   openClient,
   openFolder,
   probe,
+  profilesOverview,
   scanLimits,
   switchApply,
   switchPlan,
@@ -30,6 +31,7 @@ import type {
   LimitSignal,
   Ownership,
   Probe,
+  ProfileStore,
   SwitchPlan,
   TaskRow,
   UnifyPlan,
@@ -118,6 +120,7 @@ export default function App() {
   const [autostart, setAutostart] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => loadThemeMode());
   const [checkin, setCheckin] = useState<CheckinStore | null>(null);
+  const [profiles, setProfiles] = useState<ProfileStore | null>(null);
   const [checkinBusy, setCheckinBusy] = useState(false);
   const [checkinStep, setCheckinStep] = useState('');
   const progressRef = useRef<(() => void) | null>(null);
@@ -147,9 +150,11 @@ export default function App() {
     if (!isTauri) return;
     const un1 = listen<string>('switch-progress', (e) => setProgress(e.payload));
     const un2 = listen<string>('checkin-progress', (e) => setCheckinStep(e.payload));
+    const un3 = listen<ProfileStore>('profiles-updated', (e) => setProfiles(e.payload));
     progressRef.current = () => {
       void un1.then((f) => f());
       void un2.then((f) => f());
+      void un3.then((f) => f());
     };
     return () => {
       progressRef.current?.();
@@ -161,7 +166,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [t, a, c, p, o, lim, auto, ck] = await Promise.all([
+      const [t, a, c, p, o, lim, auto, ck, pf] = await Promise.all([
         listTasks(),
         listAccounts(),
         currentUid(),
@@ -170,6 +175,7 @@ export default function App() {
         scanLimits().catch(() => [] as LimitSignal[]),
         autostartGet().catch(() => false),
         checkinOverview().catch(() => null),
+        profilesOverview().catch(() => null),
       ]);
       setTasks(t);
       setAccounts(a);
@@ -179,6 +185,7 @@ export default function App() {
       setLimits(lim);
       setAutostart(auto);
       setCheckin(ck);
+      setProfiles(pf);
       // 调试 / 截图用：?task=<id 前缀> 直接打开某条任务的详情
       const openId = new URLSearchParams(window.location.search).get('task');
       if (openId) {
@@ -260,6 +267,14 @@ export default function App() {
       setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
     }
   }
+
+  // 列表里优先显示手机号（脱敏），没有就昵称，再没有才回退 uid 前缀
+  const labelOf = (uid: string, shortUid?: string) => {
+    const p = profiles?.profiles?.[uid];
+    if (p?.phone) return p.phone;
+    if (p?.nickname) return p.nickname;
+    return shortUid ?? uid.slice(0, 8);
+  };
 
   const accountMap = useMemo(() => {
     const m = new Map<string, Account>();
@@ -355,7 +370,7 @@ export default function App() {
       setDialog({
         kind: 'switch',
         target: uid,
-        targetShort: sp.target_short,
+        targetShort: labelOf(uid, sp.target_short),
         switchPlan: sp,
         unifyPlan: up,
       });
@@ -373,7 +388,7 @@ export default function App() {
       setDialog({
         kind: 'unify',
         target: current,
-        targetShort: current.slice(0, 8),
+        targetShort: labelOf(current),
         unifyPlan: up,
       });
     } catch (e) {
@@ -524,7 +539,11 @@ export default function App() {
                     className={`account ${a.isCurrent ? 'current' : ''} ${
                       a.taskCount === 0 ? 'empty' : ''
                     }`}
-                    title={`${a.uid}\n凭据到期 ${fmtDate(a.refresh_expires_at)}${
+                    title={`${labelOf(a.uid, a.short_uid)}${
+                      profiles?.profiles?.[a.uid]?.nickname
+                        ? `（${profiles.profiles[a.uid].nickname}）`
+                        : ''
+                    }\n${a.uid}\n凭据到期 ${fmtDate(a.refresh_expires_at)}${
                       fresh ? `\n签到：${ck.message}` : ''
                     }`}
                   >
@@ -533,10 +552,12 @@ export default function App() {
                     </span>
                     <div className="account-info">
                       <div className="account-top">
-                        <code>{a.short_uid}</code>
+                        <span className="acct-label">{labelOf(a.uid, a.short_uid)}</span>
                         {a.taskCount > 0 && <span className="badge">{a.taskCount}</span>}
                       </div>
                       <div className="account-sub">
+                        <code>{a.short_uid}</code>
+                        <span className="sep">·</span>
                         {fresh ? (
                           <span
                             className={`checkin-tick ${
@@ -696,7 +717,7 @@ export default function App() {
                   <div className="limit-title">
                     <b>检测到限流</b>
                     <span>
-                      账号 <code>{activeLimit.uid.slice(0, 8)}</code> ·{' '}
+                      账号 <code>{labelOf(activeLimit.uid)}</code> ·{' '}
                       {activeLimit.kind === 'account' ? '账号额度' : '单模型'} ·{' '}
                       {activeLimit.reset_at
                         ? activeLimit.reset_at > Date.now() / 1000
@@ -714,7 +735,7 @@ export default function App() {
                       disabled={busy}
                       onClick={() => void openSwitchDialog(limitAlt.uid)}
                     >
-                      换到 {limitAlt.short_uid}
+                      换到 {labelOf(limitAlt.uid, limitAlt.short_uid)}
                     </button>
                   )}
                   <button className="btn" onClick={() => setLimitMuted(true)}>
@@ -734,7 +755,7 @@ export default function App() {
             {grouped.map((g) => {
               const acc = accountMap.get(g.key);
               const label =
-                groupBy === 'account' ? acc?.short_uid ?? g.key.slice(0, 8) : g.key;
+                groupBy === 'account' ? labelOf(g.key, acc?.short_uid) : g.key;
               return (
                 <section className="group" key={g.key}>
                   <div className="group-head">
@@ -766,7 +787,7 @@ export default function App() {
                           </span>
                         </div>
                         <div className="card-meta">
-                          <code>{t.short_uid}</code>
+                          <code>{labelOf(t.uid, t.short_uid)}</code>
                           <span className="sep">·</span>
                           <span>{fmtTime(t.updated_at)}</span>
                           <span className="sep">·</span>
@@ -785,6 +806,7 @@ export default function App() {
       {detail && (
         <TaskDetail
           task={detail}
+          accountLabel={labelOf(detail.uid, detail.short_uid)}
           onClose={() => setDetail(null)}
           onOpenFolder={(p) => void openFolder(p)}
         />
@@ -797,7 +819,7 @@ export default function App() {
               <h2>{dialog.kind === 'switch' ? '切换账号' : '同步任务到当前账号'}</h2>
               <p>
                 {dialog.kind === 'switch'
-                  ? `${sp?.current_short ?? '—'} → ${dialog.targetShort}`
+                  ? `${sp ? labelOf(sp.current_uid, sp.current_short) : '—'} → ${dialog.targetShort}`
                   : `目标 ${dialog.targetShort}`}
               </p>
             </div>
@@ -847,7 +869,7 @@ export default function App() {
                       <div className="dist-rows">
                         {up.by_account.map(([uid, n]) => (
                           <span key={uid} className="dist-item">
-                            <code>{uid}</code>
+                            <code>{labelOf(uid)}</code>
                             <b>{n}</b>
                           </span>
                         ))}

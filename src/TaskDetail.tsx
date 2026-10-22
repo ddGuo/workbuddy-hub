@@ -80,10 +80,13 @@ function ToolRow({
 
 export default function TaskDetail({
   task,
+  accountLabel,
   onClose,
   onOpenFolder,
 }: {
   task: TaskRow;
+  /** 账号展示名（脱敏手机号或昵称），不传则回退 uid 前缀 */
+  accountLabel?: string;
   onClose: () => void;
   onOpenFolder: (path: string) => void;
 }) {
@@ -159,7 +162,7 @@ export default function TaskDetail({
           <div className="drawer-title">
             <h2>{task.title}</h2>
             <div className="drawer-sub">
-              <code>{task.short_uid}</code>
+              <code>{accountLabel ?? task.short_uid}</code>
               <span className={`status ${task.status}`}>
                 <i />
                 {STATUS_LABEL[task.status] ?? task.status}

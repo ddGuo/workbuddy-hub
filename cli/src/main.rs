@@ -10,6 +10,7 @@ use hub_core::auth_crypto::{self, AtRestKey};
 use hub_core::checkin;
 use hub_core::client_compat;
 use hub_core::daemon;
+use hub_core::profile;
 use hub_core::switch_engine;
 use hub_core::task_index;
 use hub_core::task_unify;
@@ -34,6 +35,7 @@ fn main() -> Result<()> {
         "watch" => cmd_watch(&args[1..]),
         "transcript" => cmd_transcript(&args[1..]),
         "checkin" => cmd_checkin(&args[1..]),
+        "profile" => cmd_profile(&args[1..]),
         "authhash" => cmd_authhash(),
         "enc-test" => cmd_enc_test(),
         "help" | "--help" | "-h" => {
@@ -62,6 +64,7 @@ fn print_help() {
     println!("  watch      限流守护：hub watch [--once] [--auto] [--interval 秒]");
     println!("  transcript 预览会话正文：hub transcript <session-id 前缀> [--tail N]");
     println!("  checkin    每日签到：hub checkin [--status] [--uid <前缀>]");
+    println!("  profile    读取账号资料（昵称 / 脱敏手机号）：hub profile [--uid <前缀>]");
     println!("  authhash   输出客户端凭据的哈希，用于与 TS 实现对拍");
 }
 
@@ -339,6 +342,57 @@ fn sha256_hex(s: &str) -> String {
 ///
 /// 默认只报告不动作；`--auto` 才会真的换号，而且必须满足「当前没有任务在跑」。
 /// `--once` 扫一轮就退出，方便先确认检测是否准确。
+/// 读取账号资料：昵称、脱敏手机号、账号类型。
+///
+/// 本地只有当前账号的资料，其余账号要各自打一次 `/console/accounts`。
+fn cmd_profile(args: &[String]) -> Result<()> {
+    let uid_filter = args
+        .windows(2)
+        .find(|w| w[0] == "--uid")
+        .map(|w| w[1].clone());
+
+    let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
+    let secret = client_compat::at_rest_secret(&exe)?;
+    let key = AtRestKey::from_secret(&secret);
+    let accounts = account_store::load(&client_compat::dsh_accounts_dir()?)?;
+    let now = now_secs();
+
+    println!("账号资料");
+    for a in &accounts {
+        if let Some(f) = &uid_filter {
+            if !a.uid.starts_with(f.as_str()) {
+                continue;
+            }
+        }
+        let short = &a.uid[..a.uid.len().min(8)];
+        if a.refresh_expires_at <= now {
+            println!("  {short}  跳过：凭据已过期");
+            continue;
+        }
+        let token = match a.access_token(&key) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("  {short}  解密失败：{e:#}");
+                continue;
+            }
+        };
+        match profile::fetch(&a.domain, &token, &a.uid) {
+            Ok(p) => println!(
+                "  {short}  {:<14} 昵称={:<10} 类型={}",
+                p.label(),
+                if p.nickname.is_empty() { "-" } else { &p.nickname },
+                if p.account_type.is_empty() {
+                    "-"
+                } else {
+                    &p.account_type
+                }
+            ),
+            Err(e) => println!("  {short}  读取失败：{e:#}"),
+        }
+    }
+    Ok(())
+}
+
 /// 每日签到：先用 --status 看一眼，再决定要不要真签。
 fn cmd_checkin(args: &[String]) -> Result<()> {
     let status_only = args.iter().any(|a| a == "--status");

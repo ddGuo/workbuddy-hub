@@ -16,9 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 /// 一次签到要用到的凭据。只在本进程内存里存在。
 pub struct Credentials<'a> {
@@ -242,7 +240,10 @@ fn str_of(v: &Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 发一个 POST，返回解析后的 JSON。`curl` 缺失或网络失败都会带上原因。
+/// 发一个 POST，返回解析后的 JSON。
+///
+/// 请求细节（curl、stdin 配置、HTTP 错误处理）在 [`crate::http`]，
+/// 这里只负责把「业务错误码」翻译成错误。
 fn post(c: &Credentials, path: &str) -> Result<Value> {
     let domain = if c.domain.trim().is_empty() {
         "www.workbuddy.cn"
@@ -250,59 +251,12 @@ fn post(c: &Credentials, path: &str) -> Result<Value> {
         c.domain.trim()
     };
     let url = format!("https://{domain}{path}");
+    let headers = crate::http::account_headers(c.token, c.uid, domain);
+    let (code, v) = crate::http::send("POST", &url, &headers, Some("{}"))?;
 
-    // curl 的 -K 从 stdin 读配置：token 不进 argv，也不会写进临时文件
-    let config = format!(
-        "url = \"{}\"\n\
-         request = \"POST\"\n\
-         silent\nshow-error\nmax-time = 20\n\
-         header = \"Authorization: Bearer {}\"\n\
-         header = \"X-User-Id: {}\"\n\
-         header = \"X-Domain: {}\"\n\
-         header = \"Content-Type: application/json\"\n\
-         header = \"Accept: application/json\"\n\
-         data = \"{{}}\"\n\
-         write-out = \"\\n%{{http_code}}\"\n",
-        esc(&url),
-        esc(c.token),
-        esc(c.uid),
-        esc(domain)
-    );
-
-    let mut child = Command::new("curl")
-        .args(["-K", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("启动 curl 失败（Windows 10 1803+ 自带，请确认 PATH 里有 curl.exe）")?;
-    child
-        .stdin
-        .as_mut()
-        .context("curl stdin 不可用")?
-        .write_all(config.as_bytes())
-        .context("写入 curl 配置失败")?;
-
-    let out = child.wait_with_output().context("等待 curl 失败")?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !out.status.success() {
-        bail!("请求失败：{}", first_line(&stderr));
-    }
-
-    let (body, code) = match stdout.rsplit_once('\n') {
-        Some((b, c)) => (b, c.trim().to_string()),
-        None => (stdout.as_ref(), String::new()),
-    };
-    let code: u16 = code.parse().unwrap_or(0);
-    if code == 0 {
-        bail!("没有拿到 HTTP 状态码");
-    }
-
-    let v: Value = serde_json::from_str(body)
-        .with_context(|| format!("响应不是 JSON（HTTP {code}）：{}", first_line(body)))?;
+    // 签到的「今天已领」等状态走 code != 0，属于正常业务返回，不在这里拦
     let api_code = v.get("code").and_then(Value::as_i64).unwrap_or(0);
-    if code >= 400 || (api_code != 0 && v.get("data").is_none()) {
+    if api_code != 0 && v.get("data").is_none() {
         let msg = v
             .get("msg")
             .and_then(Value::as_str)
@@ -310,23 +264,6 @@ fn post(c: &Credentials, path: &str) -> Result<Value> {
         bail!("HTTP {code} · {msg}");
     }
     Ok(v)
-}
-
-/// curl config 里的双引号字符串需要转义，顺手把换行压掉（配置是按行解析的）。
-fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace(['\r', '\n'], " ")
-}
-
-fn first_line(s: &str) -> String {
-    s.lines()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .chars()
-        .take(160)
-        .collect()
 }
 
 #[cfg(test)]
@@ -374,12 +311,6 @@ mod tests {
             },
         );
         assert_eq!(s.today_progress("2026-10-22"), (1, 2));
-    }
-
-    #[test]
-    fn escapes_curl_values() {
-        assert_eq!(esc("a\"b\\c"), "a\\\"b\\\\c");
-        assert_eq!(esc("a\nb"), "a b");
     }
 
     #[test]

@@ -6,6 +6,7 @@ import type {
   LimitSignal,
   Ownership,
   Probe,
+  ProfileStore,
   SwitchPlan,
   TaskRow,
   Transcript,
@@ -253,4 +254,42 @@ export async function checkinRun(uid?: string): Promise<CheckinStore> {
 export async function checkinSetAuto(enabled: boolean): Promise<CheckinStore> {
   if (!isTauri) return { ...MOCK_CHECKIN, auto: enabled };
   return invoke<CheckinStore>('checkin_set_auto', { enabled });
+}
+
+// 示例数据用假号码，真实号码只存在本机的 profiles.json 里
+const MOCK_PROFILES: ProfileStore = (() => {
+  const rows: [string, string, string][] = [
+    ['128a8f9c-9167-46e5-86e7-a61fa5e766ce', '138****0001', '主号'],
+    ['438b979e-2c4f-4b21-983c-d2e0081ce5b5', '138****0002', '工作号'],
+    ['4dba68a4-797f-4a97-a7e0-a23b261a3d48', '138****0003', ''],
+    ['697af213-6a63-4edb-ad9c-1ff588ee434d', '138****0004', ''],
+    ['70859058-c2c9-4c42-a463-2b773aa953bb', '138****0005', '· Y ·'],
+    ['8bc5fd09-3730-4a8a-9182-6dadb2a1b058', '138****0006', 'G'],
+    ['d0925912-43cb-466c-98a6-d06c7d86e8ad', '138****0007', ''],
+    ['db0427fd-b175-497c-85a0-c01d8f35cb13', '138****0008', ''],
+    ['edef9155-d7fc-473d-9684-525b5987a911', '138****0009', ''],
+  ];
+  const profiles: Record<string, ProfileStore['profiles'][string]> = {};
+  for (const [uid, phone, nickname] of rows) {
+    profiles[uid] = {
+      uid,
+      nickname,
+      phone,
+      email: '',
+      uin: 0,
+      account_type: 'personal',
+      fetched_at: Math.floor(Date.now() / 1000),
+    };
+  }
+  return { version: 1, profiles, last_run: Math.floor(Date.now() / 1000) };
+})();
+
+export async function profilesOverview(): Promise<ProfileStore> {
+  if (!isTauri) return MOCK_PROFILES;
+  return invoke<ProfileStore>('profiles_overview');
+}
+
+export async function profilesRefresh(force = false): Promise<ProfileStore> {
+  if (!isTauri) return MOCK_PROFILES;
+  return invoke<ProfileStore>('profiles_refresh', { force });
 }

@@ -1,5 +1,5 @@
 use hub_core::{
-    account_store, auth_crypto::AtRestKey, checkin, client_compat, daemon, rate_limit,
+    account_store, auth_crypto::AtRestKey, checkin, client_compat, daemon, profile, rate_limit,
     switch_engine, task_index, task_unify, transcript,
 };
 use serde::Serialize;
@@ -329,6 +329,56 @@ fn checkin_set_auto(enabled: bool) -> Result<checkin::CheckinStore, String> {
     Ok(store)
 }
 
+fn profile_store_path() -> Result<std::path::PathBuf, String> {
+    let hub = client_compat::hub_dir().map_err(|e| e.to_string())?;
+    Ok(hub.join("profiles.json"))
+}
+
+/// 账号资料缓存（文件里只有脱敏手机号）。
+#[tauri::command]
+fn profiles_overview() -> Result<profile::ProfileStore, String> {
+    Ok(profile::ProfileStore::load(&profile_store_path()?))
+}
+
+/// 拉取账号资料。默认只补缺的和超过 7 天的；`force` 时全部重拉。
+#[tauri::command]
+fn profiles_refresh(force: Option<bool>) -> Result<profile::ProfileStore, String> {
+    let path = profile_store_path()?;
+    let mut store = profile::ProfileStore::load(&path);
+    let now = hub_core::now_secs();
+    let force = force.unwrap_or(false);
+
+    let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe")?;
+    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    let key = AtRestKey::from_secret(&secret);
+    let dir = client_compat::dsh_accounts_dir().map_err(|e| e.to_string())?;
+    let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
+
+    for a in &accounts {
+        if !force {
+            if let Some(p) = store.profiles.get(&a.uid) {
+                // 手机号不常变，7 天更新一次就够
+                if !p.phone.is_empty() && now - p.fetched_at < 7 * 86_400 {
+                    continue;
+                }
+            }
+        }
+        if a.refresh_expires_at <= now {
+            continue;
+        }
+        let Ok(token) = a.access_token(&key) else {
+            continue;
+        };
+        if let Ok(p) = profile::fetch(&a.domain, &token, &a.uid) {
+            store.profiles.insert(a.uid.clone(), p);
+        }
+    }
+
+    store.last_run = now;
+    store.save(&path).map_err(|e| e.to_string())?;
+    Ok(store)
+}
+
 /// 是否已加入开机自启（读 HKCU Run 项，不写任何东西）。
 #[tauri::command]
 fn autostart_get() -> bool {
@@ -558,6 +608,18 @@ pub fn run() {
                 }
             }
 
+            // 账号资料：启动 8 秒后补一次（只有缺失或超过 7 天的才会真请求）
+            {
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(8));
+                    if let Ok(store) = profiles_refresh(None) {
+                        let _ = handle.emit("profiles-updated", store);
+                    }
+                });
+            }
+
             // 每日签到：启动 20 秒后先跑一轮，之后每 30 分钟看一次。
             // 今天已有结论的账号会直接跳过，不会反复打接口。
             {
@@ -605,7 +667,9 @@ pub fn run() {
             autostart_set,
             checkin_overview,
             checkin_run,
-            checkin_set_auto
+            checkin_set_auto,
+            profiles_overview,
+            profiles_refresh
         ])
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败");

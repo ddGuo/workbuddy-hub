@@ -274,3 +274,33 @@ hub authhash
 ```
 
 只比哈希，不打印明文 —— 对拍只需要确认一致，不需要把 token 落到终端里。
+
+---
+
+## 十二、账号资料（昵称 / 手机号）
+
+本地只有**当前登录账号**的资料：客户端凭据文件里的 `account.nickname` 和
+`account.phoneNumber` 都是加密字段，能用同一把 at-rest 密钥解开；其余账号在
+`~/.dsh/workbuddy-accounts/` 里只有 uid。
+
+要拿到全部账号的手机号，用各账号自己的 token 打账号接口：
+
+```
+GET {endpoint}/console/accounts
+Authorization: Bearer <accessToken> · X-User-Id · X-Domain
+```
+
+返回的 `data.accounts[]` 里有 `uid / uin / nickname / phoneNumber / email / type`。
+客户端自己刷新账号列表（`observeAccountRefresh`）走的也是这个接口。
+
+### 处理规则
+
+| 规则 | 原因 |
+|---|---|
+| 手机号脱敏后再落盘（`199****9283`） | 界面只需要「认出是哪个号」，完整号码没必要保存和显示 |
+| 缓存 7 天，`force` 才全部重拉 | 手机号几乎不变，9 个账号每次启动都请求没有意义 |
+| 显示优先级：手机号 → 昵称 → uid 前缀 | 有些账号（如微信登录）没有手机号 |
+| 缓存文件 `~/.workbuddy-hub/profiles.json` | 离线也能显示；不进入仓库，也不含完整号码 |
+
+实测 9 个账号都返回了手机号；昵称多数就是脱敏手机号本身，两个自定义昵称
+（`· Y ·`、`G`）的账号仍然优先显示手机号。

@@ -133,3 +133,20 @@ export interface CheckinStore {
   last_run: number;
   last_summary: string;
 }
+
+export interface Profile {
+  uid: string;
+  nickname: string;
+  /** 已脱敏，形如 199****9283；没有手机号时为空 */
+  phone: string;
+  email: string;
+  uin: number;
+  account_type: string;
+  fetched_at: number;
+}
+
+export interface ProfileStore {
+  version: number;
+  profiles: Record<string, Profile>;
+  last_run: number;
+}
