@@ -374,6 +374,24 @@ const RUN_NAME: &str = "WorkBuddyHub";
 /// 同一时间只允许一轮签到：调度线程和用户点「立即签到」可能撞在一起。
 static CHECKIN_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// 账号重新登录后，把当天残留的签到失败记录清掉，让下一轮立即重试。
+fn clear_checkin_error(uid: &str) {
+    let Ok(path) = checkin_store_path() else {
+        return;
+    };
+    let mut store = checkin::CheckinStore::load(&path);
+    let today = hub_core::format_date(hub_core::now_secs());
+    let stale = store
+        .records
+        .get(uid)
+        .map(|r| r.date == today && r.state == "error")
+        .unwrap_or(false);
+    if stale {
+        store.records.remove(uid);
+        let _ = store.save(&path);
+    }
+}
+
 fn checkin_store_path() -> Result<std::path::PathBuf, String> {
     let hub = client_compat::hub_dir().map_err(|e| e.to_string())?;
     Ok(hub.join("checkin.json"))
@@ -416,9 +434,11 @@ fn run_checkins(
             // 已签过的账号也要拉一次状态：剩余积分会随使用变化，列表要显示最新值。
             // 只有「今天失败过」的账号在 6 小时内不重试（手动点击除外）。
             if let Some(r) = store.records.get(&a.uid) {
+                // 401 不适用 6 小时退避：重新登录后令牌就变了，下一轮应该立刻重试
                 if !force
                     && r.date == today
                     && r.state == "error"
+                    && !r.message.contains("401")
                     && hub_core::now_secs() - r.updated_at < 6 * 3600
                 {
                     failed += 1;
@@ -456,7 +476,10 @@ fn run_checkins(
                 uid: &a.uid,
                 domain: &a.domain,
             };
-            let rec = checkin::check_and_claim(&creds, &today);
+            let mut rec = checkin::check_and_claim(&creds, &today);
+            if rec.state == "error" && rec.message.contains("401") {
+                rec.message = "登录态已失效，请重新登录该账号".into();
+            }
             match rec.state.as_str() {
                 "claimed" => claimed += 1,
                 "already" => already += 1,
@@ -1122,6 +1145,7 @@ pub fn run() {
                                 if let Ok(dir) = client_compat::accounts_dir() {
                                     if let Ok(Some(uid)) = account_store::save_current(&auth, &dir)
                                     {
+                                        clear_checkin_error(&uid);
                                         let _ = handle.emit("accounts-updated", uid);
                                     }
                                 }
