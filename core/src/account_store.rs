@@ -99,6 +99,18 @@ pub fn save_current(auth_path: &Path, dir: &Path) -> Result<Option<String>> {
         Some(v) if v.is_object() => v,
         _ => bail!("凭据文件里没有 auth 字段"),
     };
+    // 客户端登出后可能留下空的 auth；这种不能覆盖掉账号库里有效的令牌
+    let has_token = |key: &str| {
+        auth.get(key)
+            .map(|v| {
+                v.is_object()
+                    || v.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)
+            })
+            .unwrap_or(false)
+    };
+    if !has_token("accessToken") || !has_token("refreshToken") {
+        return Ok(None);
+    }
 
     fs::create_dir_all(dir)
         .with_context(|| format!("创建账号库目录失败：{}", dir.display()))?;

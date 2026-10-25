@@ -63,6 +63,30 @@ impl CreditStore {
     }
 }
 
+/// 令牌在服务端是否仍然有效。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenState {
+    Valid,
+    /// 服务端明确返回 401：登录态已失效，切换过去客户端会要求重新登录
+    Invalid,
+    /// 网络异常 / 5xx，无法判断，按可用处理
+    Unknown,
+}
+
+pub fn check_token(c: &Credentials) -> TokenState {
+    match fetch_raw(c) {
+        Ok(_) => TokenState::Valid,
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("401") {
+                TokenState::Invalid
+            } else {
+                TokenState::Unknown
+            }
+        }
+    }
+}
+
 /// 原始响应，排查字段时用（CLI `--raw`）。
 pub fn fetch_raw(c: &Credentials) -> Result<Value> {
     let domain = if c.domain.trim().is_empty() {

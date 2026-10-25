@@ -293,10 +293,11 @@ export async function authState(): Promise<AuthState> {
 
 export const ERR_NO_LOGIN = 'NO_LOGIN:';
 export const ERR_EXPIRED = 'EXPIRED:';
+export const ERR_TOKEN_EXPIRED = 'TOKEN_EXPIRED:';
 
 /** 后端用前缀区分「未登录 / 凭据过期」，这里统一拆成可判断的结构。 */
 export function describeError(e: unknown): {
-  code: 'no_login' | 'expired' | null;
+  code: 'no_login' | 'expired' | 'token_expired' | null;
   text: string;
 } {
   const raw = e instanceof Error ? e.message : String(e);
@@ -305,6 +306,9 @@ export function describeError(e: unknown): {
   }
   if (raw.startsWith(ERR_EXPIRED)) {
     return { code: 'expired', text: raw.slice(ERR_EXPIRED.length) };
+  }
+  if (raw.startsWith(ERR_TOKEN_EXPIRED)) {
+    return { code: 'token_expired', text: raw.slice(ERR_TOKEN_EXPIRED.length) };
   }
   return { code: null, text: raw };
 }

@@ -750,6 +750,30 @@ fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String,
     let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
 
+    // 切之前先问服务端这个令牌还认不认。失效的账号写进去，客户端启动后
+    // 只会把用户踢回登录页；不如在这里拦下来，并告诉用户去登录一次。
+    let _ = app.emit("switch-progress", "正在校验账号登录态…");
+    let short = &account.uid[..account.uid.len().min(8)];
+    let token = account
+        .access_token(&key)
+        .map_err(|e| format!("读取账号令牌失败：{e}"))?;
+    let probe = checkin::Credentials {
+        token: &token,
+        uid: &account.uid,
+        domain: &account.domain,
+    };
+    // access token 还没到期却被 401，说明会话已被服务端吊销（换机沿用旧存档、
+    // 在别处登录过同一账号），切过去只会被踢回登录页。
+    // 如果 access token 本来就过期了，客户端还能用 refresh token 续期，放行。
+    let access_expired = account.expires_at <= hub_core::now_secs();
+    if !access_expired
+        && matches!(credit::check_token(&probe), credit::TokenState::Invalid)
+    {
+        return Err(format!(
+            "TOKEN_EXPIRED:账号 {short} 的登录态已失效，请先在 WorkBuddy 客户端登录一次该账号，再回来切换"
+        ));
+    }
+
     let db = db_path()?;
     let (_, ownership_path, backup_dir) = daemon::hub_paths().map_err(|e| e.to_string())?;
 
@@ -767,7 +791,6 @@ fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String,
         },
     )?;
 
-    let short = &account.uid[..account.uid.len().min(8)];
     Ok(format!("已切换到 {short}，任务已归集。客户端正在重启。"))
 }
 
