@@ -29,6 +29,13 @@ pub struct CreditSummary {
     pub packages: usize,
     /// 拉取时间（unix 秒）
     pub updated_at: i64,
+    /// 服务端是否仍认这个账号的令牌；401 时为 false
+    #[serde(default = "default_valid")]
+    pub valid: bool,
+}
+
+fn default_valid() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +158,7 @@ fn parse_summary(v: &Value) -> Option<CreditSummary> {
         total,
         packages,
         updated_at: crate::now_secs(),
+        valid: true,
     })
 }
 

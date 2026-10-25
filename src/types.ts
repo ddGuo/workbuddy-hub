@@ -184,6 +184,8 @@ export interface CreditSummary {
   total: number;
   packages: number;
   updated_at: number;
+  /** 服务端是否仍认这个账号的令牌 */
+  valid: boolean;
 }
 
 export interface CreditStore {

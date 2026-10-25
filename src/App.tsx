@@ -880,13 +880,16 @@ export default function App() {
                 const fresh = ck && ck.date === today;
                 const expiredAcct = isExpired(a);
                 const cr = credits?.credits?.[a.uid];
-                const blocked = switchBlockReason(a);
+                const invalidToken = cr?.valid === false;
+                const blocked = invalidToken
+                  ? '登录态已失效，请先在客户端登录一次该账号'
+                  : switchBlockReason(a);
                 return (
                   <div
                     key={a.uid}
                     className={`account ${a.isCurrent ? 'current' : ''} ${
                       a.taskCount === 0 ? 'empty' : ''
-                    } ${expiredAcct ? 'expired' : ''}`}
+                    } ${expiredAcct || invalidToken ? 'expired' : ''}`}
                     title={`${labelOf(a.uid, a.short_uid)}${
                       profiles?.profiles?.[a.uid]?.nickname
                         ? `（${profiles.profiles[a.uid].nickname}）`
@@ -904,7 +907,11 @@ export default function App() {
                         {a.taskCount > 0 && <span className="badge">{a.taskCount}</span>}
                       </div>
                       <div className="account-sub">
-                        {expiredAcct ? (
+                        {invalidToken ? (
+                          <span className="expired-text" title="服务端已不认这个账号的令牌">
+                            登录失效
+                          </span>
+                        ) : expiredAcct ? (
                           <span
                             className="expired-text"
                             title={`凭据到期 ${fmtDate(a.refresh_expires_at)}`}
@@ -927,7 +934,7 @@ export default function App() {
                         ) : (
                           <span>{fmtDate(a.refresh_expires_at)} 到期</span>
                         )}
-                        {cr && (
+                        {cr && !invalidToken && (
                           <>
                             <span className="sep">·</span>
                             <span

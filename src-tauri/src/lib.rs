@@ -564,8 +564,24 @@ fn credits_refresh_blocking(
             uid: &a.uid,
             domain: &a.domain,
         };
-        if let Ok(summary) = credit::fetch(&creds) {
-            store.credits.insert(a.uid.clone(), summary);
+        match credit::fetch(&creds) {
+            Ok(summary) => {
+                store.credits.insert(a.uid.clone(), summary);
+            }
+            Err(e) if e.to_string().contains("401") => {
+                // 服务端不认这个令牌了，界面上直接标「登录失效」
+                store.credits.insert(
+                    a.uid.clone(),
+                    credit::CreditSummary {
+                        remaining: 0.0,
+                        total: 0.0,
+                        packages: 0,
+                        updated_at: hub_core::now_secs(),
+                        valid: false,
+                    },
+                );
+            }
+            Err(_) => {}
         }
     }
 
