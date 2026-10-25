@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import TaskDetail from './TaskDetail';
 import {
@@ -12,6 +13,8 @@ import {
   creditsOverview,
   creditsRefresh,
   probeModel,
+  exportCredentials,
+  importCredentials,
   syncAccounts,
   describeError,
   isTauri,
@@ -173,6 +176,24 @@ export default function App() {
   });
   const [quickSwitching, setQuickSwitching] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  const [credModal, setCredModal] = useState<{
+    mode: 'export' | 'import';
+    path: string;
+    password: string;
+    confirm: string;
+    busy: boolean;
+  } | null>(() => {
+    // 浏览器预览用：?cred=1
+    if (isTauri) return null;
+    if (new URLSearchParams(window.location.search).get('cred') !== '1') return null;
+    return {
+      mode: 'export',
+      path: 'D:////workbuddy-hub-credentials.json',
+      password: '',
+      confirm: '',
+      busy: false,
+    };
+  });
   const [hoverTip, setHoverTip] = useState<{
     text: string;
     left: number;
@@ -627,6 +648,65 @@ export default function App() {
     }
   }
 
+  async function startExport() {
+    try {
+      const path = await saveDialog({
+        defaultPath: 'workbuddy-hub-credentials.json',
+        filters: [{ name: '凭据文件', extensions: ['json'] }],
+      });
+      if (!path) return;
+      setCredModal({ mode: 'export', path, password: '', confirm: '', busy: false });
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    }
+  }
+
+  async function startImport() {
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: '凭据文件', extensions: ['json'] }],
+      });
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      if (!path) return;
+      setCredModal({ mode: 'import', path, password: '', confirm: '', busy: false });
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    }
+  }
+
+  async function submitCred() {
+    if (!credModal || credModal.busy) return;
+    const pwd = credModal.password;
+    if (pwd.length < 6) {
+      setToast({ kind: 'err', text: '密码至少 6 位' });
+      return;
+    }
+    if (credModal.mode === 'export' && pwd !== credModal.confirm) {
+      setToast({ kind: 'err', text: '两次输入的密码不一致' });
+      return;
+    }
+    setCredModal({ ...credModal, busy: true });
+    try {
+      if (credModal.mode === 'export') {
+        const n = await exportCredentials(credModal.path, pwd);
+        setToast({ kind: 'ok', text: `已导出 ${n} 个账号，文件：${credModal.path}` });
+      } else {
+        const r = await importCredentials(credModal.path, pwd);
+        setToast({
+          kind: 'ok',
+          text: `导入 ${r.imported} 个账号${r.skipped ? `，跳过 ${r.skipped} 个（本机已有更新的令牌）` : ''}`,
+        });
+        await load();
+      }
+      setCredModal(null);
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+      setCredModal({ ...credModal, busy: false });
+    }
+  }
+
   async function handleOpenClient() {
     try {
       await openClient();
@@ -876,7 +956,23 @@ export default function App() {
         <aside className="rail">
           <div className="rail-head">
             <span>账号</span>
-            <span className="rail-count">{accounts.length}</span>
+            <span className="rail-head-right">
+              <span className="rail-count">{accounts.length}</span>
+              <button
+                className="rail-act"
+                onClick={() => void startExport()}
+                title="导出凭据（密码加密，可拷到别的电脑导入）"
+              >
+                导出
+              </button>
+              <button
+                className="rail-act"
+                onClick={() => void startImport()}
+                title="从导出的文件导入凭据"
+              >
+                导入
+              </button>
+            </span>
           </div>
 
           {!loggedIn && (
@@ -1330,6 +1426,68 @@ export default function App() {
                   切换到 {quickSwitching}，客户端会关闭并重新打开，约 10 秒。
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {credModal && (
+        <div
+          className="modal-backdrop"
+          onClick={() => !credModal.busy && setCredModal(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>{credModal.mode === 'export' ? '导出凭据' : '导入凭据'}</h2>
+              <p>{credModal.path}</p>
+            </div>
+            <div className="modal-body">
+              <p className="cred-hint">
+                {credModal.mode === 'export'
+                  ? '文件用这个密码加密（PBKDF2 + AES-256-GCM）。换电脑导入时要输入同一个密码。'
+                  : '输入导出时设置的密码。只导入本机没有、或更新的账号令牌。'}
+              </p>
+              <input
+                className="field-input"
+                type="password"
+                placeholder="密码（至少 6 位）"
+                autoFocus
+                value={credModal.password}
+                onChange={(e) =>
+                  setCredModal({ ...credModal, password: e.target.value })
+                }
+              />
+              {credModal.mode === 'export' && (
+                <input
+                  className="field-input"
+                  type="password"
+                  placeholder="再输一次"
+                  value={credModal.confirm}
+                  onChange={(e) =>
+                    setCredModal({ ...credModal, confirm: e.target.value })
+                  }
+                />
+              )}
+            </div>
+            <div className="modal-foot">
+              <button
+                className="btn sm"
+                disabled={credModal.busy}
+                onClick={() => setCredModal(null)}
+              >
+                取消
+              </button>
+              <button
+                className="btn primary sm"
+                disabled={credModal.busy}
+                onClick={() => void submitCred()}
+              >
+                {credModal.busy
+                  ? '处理中…'
+                  : credModal.mode === 'export'
+                    ? '导出'
+                    : '导入'}
+              </button>
             </div>
           </div>
         </div>

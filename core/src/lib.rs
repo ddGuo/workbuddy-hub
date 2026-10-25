@@ -18,6 +18,7 @@ pub mod http;
 pub mod proc;
 pub mod profile;
 pub mod model_probe;
+pub mod portable;
 pub mod rate_limit;
 pub mod switch_engine;
 pub mod task_index;

@@ -144,6 +144,19 @@ export async function unifyStatus(): Promise<Ownership> {
   return invoke<Ownership>('unify_status');
 }
 
+export async function exportCredentials(path: string, password: string): Promise<number> {
+  if (!isTauri) throw new Error('浏览器预览不支持导出凭据');
+  return invoke<number>('export_credentials', { path, password });
+}
+
+export async function importCredentials(
+  path: string,
+  password: string,
+): Promise<{ imported: number; skipped: number }> {
+  if (!isTauri) throw new Error('浏览器预览不支持导入凭据');
+  return invoke<{ imported: number; skipped: number }>('import_credentials', { path, password });
+}
+
 export async function probeModel(uid: string, model: string): Promise<ProbeResult> {
   if (!isTauri) {
     return {

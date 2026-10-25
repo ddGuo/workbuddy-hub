@@ -41,7 +41,10 @@ Verified against 9 accounts: after unifying, the task list is complete and the c
 - **Task overview** — cross-account list, status filters, search by title / path / account (`/` to focus), grouped by account or time
 - **Automatic account archive** — sign a new account into the client and hub saves it, no external tool needed
 - **Account identity** — masked phone numbers (`199****9283`), check-in streak and **remaining credits**
-- **Collapsible sidebar** — hide the check-in / unify / client cards to make room for accounts
+- **Credential export / import** — export the whole account library into one password-encrypted
+  file (PBKDF2-HMAC-SHA256 + AES-256-GCM) and import it on another PC, where the tokens are
+  re-wrapped with the local at-rest key. The file contains encrypted plaintext tokens:
+  **lose the password and it cannot be recovered**, so do not send it over public channels.
 - **One-click switch** — backup credentials and database → atomic write → unify → restart, automatic rollback on failure
 - **Task unification** — rewrites `sessions.user_id` so the native list shows everything; original ownership archived
 - **Rate-limit detection** — reads the raw 429 text, determines scope (single model vs. account quota) and reset time

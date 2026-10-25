@@ -1,6 +1,6 @@
 use hub_core::{
     account_store, auth_crypto::AtRestKey, auth_seen, checkin, client_compat, credit, daemon,
-    model_probe, profile, rate_limit, switch_engine, task_index, task_unify, transcript,
+    model_probe, portable, profile, rate_limit, switch_engine, task_index, task_unify, transcript,
 };
 use serde::Serialize;
 use std::process::Command;
@@ -511,6 +511,125 @@ fn credits_store_path() -> Result<std::path::PathBuf, String> {
     Ok(hub.join("credits.json"))
 }
 
+#[derive(Serialize)]
+pub struct ImportOut {
+    imported: usize,
+    skipped: usize,
+}
+
+/// 把账号库里所有可用账号导出成一个密码加密的文件。
+#[tauri::command]
+async fn export_credentials(path: String, password: String) -> Result<usize, String> {
+    on_blocking(move || export_credentials_blocking(&path, &password)).await
+}
+
+fn export_credentials_blocking(path: &str, password: &str) -> Result<usize, String> {
+    let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
+    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    let key = AtRestKey::from_secret(&secret);
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
+    let now = hub_core::now_secs();
+
+    let mut payload = portable::ExportPayload::default();
+    for a in &accounts {
+        if a.refresh_expires_at <= now {
+            continue;
+        }
+        let (Ok(access), Ok(refresh)) = (a.access_token(&key), a.refresh_token(&key)) else {
+            continue;
+        };
+        payload.accounts.push(portable::ExportedAccount {
+            uid: a.uid.clone(),
+            domain: a.domain.clone(),
+            expires_at: a.expires_at,
+            refresh_expires_at: a.refresh_expires_at,
+            access_token: access,
+            refresh_token: refresh,
+        });
+    }
+    if payload.accounts.is_empty() {
+        return Err("没有可导出的账号：令牌都读不出来，或者都已过期".into());
+    }
+
+    let text = portable::seal(&payload, password).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("写入文件失败：{e}"))?;
+    Ok(payload.accounts.len())
+}
+
+/// 导入密码加密的凭据文件，用本机 at-rest 密钥重新封装后写入账号库。
+#[tauri::command]
+async fn import_credentials(
+    app: tauri::AppHandle,
+    path: String,
+    password: String,
+) -> Result<ImportOut, String> {
+    on_blocking(move || import_credentials_blocking(&app, &path, &password)).await
+}
+
+fn import_credentials_blocking(
+    app: &tauri::AppHandle,
+    path: &str,
+    password: &str,
+) -> Result<ImportOut, String> {
+    use tauri::Emitter;
+
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败：{e}"))?;
+    let payload = portable::open(&text, password).map_err(|e| e.to_string())?;
+
+    let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
+    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    let key = AtRestKey::from_secret(&secret);
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建账号库目录失败：{e}"))?;
+    let existing = account_store::load(&dir).map_err(|e| e.to_string())?;
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    for acc in payload.accounts {
+        let uid = acc.uid.trim();
+        if uid.is_empty() || acc.access_token.trim().is_empty() || acc.refresh_token.trim().is_empty()
+        {
+            skipped += 1;
+            continue;
+        }
+        // 本机已有更新的令牌就不要覆盖
+        if let Some(old) = existing.iter().find(|a| a.uid == uid) {
+            if old.refresh_expires_at >= acc.refresh_expires_at {
+                skipped += 1;
+                continue;
+            }
+        }
+
+        let access_env = hub_core::auth_crypto::encrypt_field(&acc.access_token, &key, None)
+            .map_err(|e| format!("封装令牌失败：{e}"))?;
+        let refresh_env = hub_core::auth_crypto::encrypt_field(&acc.refresh_token, &key, None)
+            .map_err(|e| format!("封装令牌失败：{e}"))?;
+        let doc = serde_json::json!({
+            "account": { "uid": uid },
+            "auth": {
+                "accessToken": { "$wbEncrypted": 1, "envelope": access_env },
+                "refreshToken": { "$wbEncrypted": 1, "envelope": refresh_env },
+                "expiresAt": acc.expires_at,
+                "refreshExpiresAt": acc.refresh_expires_at,
+                "domain": acc.domain,
+            }
+        });
+        let target = dir.join(format!("{uid}.json"));
+        std::fs::write(&target, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("写入账号库失败：{e}"))?;
+        imported += 1;
+    }
+
+    if imported > 0 {
+        let _ = app.emit("accounts-updated", "");
+    }
+    Ok(ImportOut {
+        imported,
+        skipped,
+    })
+}
+
 /// 用账号凭据 + 指定模型发一次最小请求，直接问服务端是否限流。
 #[tauri::command]
 async fn probe_model(uid: String, model: String) -> Result<model_probe::ProbeResult, String> {
@@ -941,6 +1060,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             use tauri::Manager;
 
@@ -1220,6 +1340,8 @@ pub fn run() {
             credits_overview,
             credits_refresh,
             probe_model,
+            export_credentials,
+            import_credentials,
             checkin_run,
             checkin_set_auto,
             profiles_overview,

@@ -453,6 +453,54 @@ input {
   min-height: 0;
 }
 
+.rail-head-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rail-act {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.rail-act:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.cred-hint {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.field-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12px;
+  outline: none;
+}
+
+.field-input:focus {
+  border-color: var(--accent);
+}
+
 .rail-head {
   display: flex;
   align-items: center;
