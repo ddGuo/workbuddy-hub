@@ -14,8 +14,14 @@ use std::time::{Duration, Instant};
 const AUTH_SUBPATH: &str = "CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info";
 
 /// 用来取出 at-rest 密钥的脚本。输出是 JSON，其中含 `atRestSecretKey`。
-const SECRET_SCRIPT: &str =
-    r#"process.stdout.write(String(process._linkedBinding("electron_browser_workbuddy_storage").loggerGet()))"#;
+///
+/// 新版客户端里 `loggerGet()` 可能返回**对象**而不是字符串，
+/// 直接 `String(...)` 会得到 `[object Object]`，解析端就会报“找不到 JSON”。
+/// 这里字符串原样输出，其它类型统一 JSON 序列化。
+const SECRET_SCRIPT: &str = r#"(() => {
+  const s = process._linkedBinding("electron_browser_workbuddy_storage").loggerGet();
+  process.stdout.write(typeof s === "string" ? s : JSON.stringify(s));
+})()"#;
 
 /// 按优先级列出候选可执行文件路径。
 pub fn exe_candidates() -> Vec<PathBuf> {
@@ -371,15 +377,33 @@ fn parse_secret_output(out: &CapturedOutput) -> Result<String> {
     }
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let json_slice = extract_json(&stdout)
-        .ok_or_else(|| anyhow!("客户端输出里找不到 JSON：{}", truncate(&stdout, 200)))?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // 优先 stdout；没有花括号就看 stderr
+    let raw = if stdout.contains('{') {
+        stdout.as_ref()
+    } else {
+        stderr.as_ref()
+    };
+    // 少数版本会把整个 JSON 再包成一层字符串（首尾带引号、内部转义）
+    let trimmed = raw.trim();
+    let unwrapped: String = serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+
+    let json_slice = extract_json(&unwrapped).ok_or_else(|| {
+        anyhow!(
+            "客户端输出里找不到 JSON（stdout: {} / stderr: {}）",
+            truncate(&stdout, 160),
+            truncate(&stderr, 160)
+        )
+    })?;
     let value: Value = serde_json::from_str(json_slice).context("密钥输出不是合法 JSON")?;
 
     value
         .get("atRestSecretKey")
+        .or_else(|| value.get("data").and_then(|d| d.get("atRestSecretKey")))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| anyhow!("输出中缺少 atRestSecretKey 字段"))
+        .ok_or_else(|| anyhow!("输出中缺少 atRestSecretKey 字段：{}", truncate(json_slice, 200)))
 }
 
 /// 从可能混有日志的输出里截出第一个 `{` 到最后一个 `}`。
@@ -447,6 +471,22 @@ mod tests {
     fn rejects_missing_field() {
         let out = captured(true, Some(0), "{\"other\":1}", "");
         assert!(parse_secret_output(&out).unwrap_err().to_string().contains("atRestSecretKey"));
+    }
+
+    #[test]
+    fn parses_object_and_string_wrapped_output() {
+        // 新版客户端 loggerGet() 返回对象
+        let out = captured(true, Some(0), r#"{"atRestSecretKey":"abc"}"#, "");
+        assert_eq!(parse_secret_output(&out).unwrap(), "abc");
+
+        // 整个 JSON 又被包成字符串
+        let wrapped = serde_json::to_string(r#"{"atRestSecretKey":"xyz"}"#).unwrap();
+        let out = captured(true, Some(0), &wrapped, "");
+        assert_eq!(parse_secret_output(&out).unwrap(), "xyz");
+
+        // 输出跑到 stderr
+        let out = captured(true, Some(0), "", r#"{"atRestSecretKey":"err"}"#);
+        assert_eq!(parse_secret_output(&out).unwrap(), "err");
     }
 
     #[test]
