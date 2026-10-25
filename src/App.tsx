@@ -50,6 +50,19 @@ import type {
 
 const fmtInt = (n: number) => Math.round(n).toLocaleString('zh-CN');
 
+/** 客户端重启时会短暂锁库，读失败了退避重试几次 */
+async function retryRead<T>(fn: () => Promise<T>, times = 4, wait = 500): Promise<T | null> {
+  for (let i = 0; i < times; i += 1) {
+    try {
+      return await fn();
+    } catch {
+      if (i === times - 1) return null;
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  return null;
+}
+
 /** 积分可能带小数，最多保留一位 */
 const fmtCredit = (n: number) =>
   (Math.round(n * 10) / 10).toLocaleString('zh-CN', { maximumFractionDigits: 1 });
@@ -280,21 +293,20 @@ export default function App() {
           setToast({ kind: 'ok', text: `已从旧账号库导入 ${r.imported} 个账号` });
         }
       }
-      const [t, a] = await Promise.allSettled([listTasks(), listAccounts()]);
+      const [t, a] = await Promise.all([retryRead(listTasks), retryRead(listAccounts)]);
       if (seq !== loadSeq.current) return;
 
-      if (t.status === 'fulfilled') setTasks(t.value);
-      else setError(describeError(t.reason).text);
-      if (a.status === 'fulfilled') setAccounts(a.value);
-      else setError(describeError(a.reason).text);
+      if (t) setTasks(t);
+      else setError('读取任务失败，请稍后重试');
+      if (a) setAccounts(a);
 
       setAuth(nextAuth);
       setCurrent(nextAuth.current_uid ?? '');
 
       // 调试 / 截图用：?task=<id 前缀> 直接打开某条任务的详情
       const openId = new URLSearchParams(window.location.search).get('task');
-      if (openId && t.status === 'fulfilled') {
-        const hit = t.value.find((x) => x.id.startsWith(openId));
+      if (openId && t) {
+        const hit = t.find((x) => x.id.startsWith(openId));
         if (hit) setDetail(hit);
       }
     } finally {
@@ -305,6 +317,17 @@ export default function App() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // 客户端同步任务是异步的：切号/登录后本地库会晚几秒才有数据。
+  // 前台每 20 秒轻量重读一次，避免一直停在空列表。
+  useEffect(() => {
+    if (!isTauri) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      listTasks().then(setTasks).catch(() => {});
+    }, 20000);
+    return () => window.clearInterval(id);
   }, []);
 
   // 去客户端登录后切回来，登录态要自动恢复
@@ -322,6 +345,7 @@ export default function App() {
             await syncAccounts().catch(() => {});
             listAccounts().then(setAccounts).catch(() => {});
           }
+          listTasks().then(setTasks).catch(() => {});
         })();
       }, 500);
     };
@@ -568,6 +592,7 @@ export default function App() {
     try {
       const msg = await switchApply(uid);
       setToast({ kind: 'ok', text: msg });
+      await new Promise((r) => setTimeout(r, 1200));
       await load();
     } catch (e) {
       setToast({ kind: 'err', text: describeError(e).text });

@@ -1,6 +1,6 @@
 [package]
 name = "workbuddy-hub"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "把多个 WorkBuddy 账号的任务收拢成一个列表"
 license = "MIT"
