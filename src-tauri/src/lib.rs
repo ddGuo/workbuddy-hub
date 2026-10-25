@@ -754,6 +754,13 @@ fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String,
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
     let account = match_account(&accounts, target)?;
 
+    // 切走之前先把**当前账号**的最新令牌存进账号库。
+    // 否则刚在客户端登录完就切走，后台 10 秒轮询还没跑到，存档里还是旧令牌，
+    // 下次切回来就会因为令牌过期/被轮换而要求重新登录。
+    if let Some(auth) = client_compat::auth_file() {
+        let _ = account_store::save_current(&auth, &dir);
+    }
+
     // 登录态与有效期要在退出客户端之前判掉
     let auth_path = client_compat::auth_file().ok_or_else(no_login)?;
     if account.refresh_expires_at <= hub_core::now_secs() {
