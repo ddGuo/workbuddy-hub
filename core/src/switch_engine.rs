@@ -115,44 +115,21 @@ pub fn apply(
     let refresh_env = encrypt_field(&refresh, key, None)?;
     steps.push("用 at-rest 密钥重新封装令牌".into());
 
-    // 4. 组装新文档：替换 auth 与 account.uid，保留其余结构
-    let mut next = current.clone();
-    let auth = next
-        .get_mut("auth")
-        .and_then(|v| v.as_object_mut())
-        .context("凭据文件缺少 auth 对象")?;
-    auth.insert(
-        "accessToken".into(),
-        json!({ "$wbEncrypted": 1, "envelope": access_env }),
-    );
-    auth.insert(
-        "refreshToken".into(),
-        json!({ "$wbEncrypted": 1, "envelope": refresh_env }),
-    );
-    auth.insert("expiresAt".into(), json!(target.expires_at));
-    auth.insert("refreshExpiresAt".into(), json!(target.refresh_expires_at));
-    if !target.domain.is_empty() {
-        auth.insert("domain".into(), json!(target.domain));
-    }
+    // 4. 组装新文档：替换 auth、account 与会话快照，保留其余结构
+    let next = build_next(&current, target, &access_env, &refresh_env)?;
     report.written_fields = vec![
         "auth.accessToken".into(),
         "auth.refreshToken".into(),
         "auth.expiresAt".into(),
         "auth.refreshExpiresAt".into(),
+        "auth.lastRefreshTime".into(),
         "auth.domain".into(),
         "account.uid".into(),
+        "accounts / allAccounts".into(),
     ];
     steps.push("组装新凭据文档".into());
-
-    if let Some(account) = next.get_mut("account").and_then(|v| v.as_object_mut()) {
-        account.insert("uid".into(), json!(target.uid));
-        // nickname / phoneNumber 属于上一个账号，必须清掉，
-        // 否则客户端会显示错误的身份信息（它会在登录后自己补回来）。
-        account.remove("nickname");
-        account.remove("phoneNumber");
-        account.remove("uin");
-        steps.push("替换 account.uid 并清除上一账号的身份字段".into());
-    }
+    steps.push("替换 account.uid 并清除上一账号的身份字段".into());
+    steps.push("同步 accounts / allAccounts 到目标账号".into());
 
     if dry_run {
         steps.push("演练模式：不写文件、不动进程".into());
@@ -273,9 +250,107 @@ pub fn current_uid(auth_path: &Path) -> Result<String> {
         .to_string())
 }
 
+/// 把目标账号的凭据合并进当前凭据文件。
+///
+/// - 时间戳统一写**毫秒**（客户端格式）
+/// - `account` 与 `accounts` / `allAccounts` 一起换成目标 uid，
+///   并清掉上一账号的身份字段（客户端登录后会自己补回）
+fn build_next(
+    current: &Value,
+    target: &crate::account_store::Account,
+    access_env: &str,
+    refresh_env: &str,
+) -> Result<Value> {
+    let mut next = current.clone();
+    let auth = next
+        .get_mut("auth")
+        .and_then(|v| v.as_object_mut())
+        .context("凭据文件缺少 auth 对象")?;
+    auth.insert(
+        "accessToken".into(),
+        json!({ "$wbEncrypted": 1, "envelope": access_env }),
+    );
+    auth.insert(
+        "refreshToken".into(),
+        json!({ "$wbEncrypted": 1, "envelope": refresh_env }),
+    );
+    // 账号库对外是归一化后的秒；客户端凭据文件用毫秒。
+    let expires_ms = target.expires_at.saturating_mul(1000);
+    let refresh_ms = target.refresh_expires_at.saturating_mul(1000);
+    auth.insert("expiresAt".into(), json!(expires_ms));
+    auth.insert("refreshExpiresAt".into(), json!(refresh_ms));
+    auth.insert(
+        "lastRefreshTime".into(),
+        json!(now_secs().saturating_mul(1000)),
+    );
+    if !target.domain.is_empty() {
+        auth.insert("domain".into(), json!(target.domain));
+    }
+
+    if let Some(account) = next.get_mut("account").and_then(|v| v.as_object_mut()) {
+        account.insert("uid".into(), json!(target.uid));
+        // nickname / phoneNumber 属于上一个账号，必须清掉，
+        // 否则客户端会显示错误的身份信息（它会在登录后自己补回来）。
+        account.remove("nickname");
+        account.remove("phoneNumber");
+        account.remove("uin");
+    }
+
+    // accounts / allAccounts 是客户端的会话快照，刷新会话时要求这里非空且
+    // 包含当前账号。只改 account.uid 会让快照仍指向旧账号，客户端判定会话失效。
+    for key in ["accounts", "allAccounts"] {
+        if let Some(arr) = next.get_mut(key).and_then(|v| v.as_array_mut()) {
+            if let Some(first) = arr.first_mut().and_then(|v| v.as_object_mut()) {
+                first.insert("uid".into(), json!(target.uid));
+                first.remove("nickname");
+                first.remove("phoneNumber");
+                first.remove("uin");
+            }
+            arr.truncate(1);
+        }
+    }
+    Ok(next)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn writes_millisecond_expiry_and_syncs_accounts() {
+        let current = json!({
+            "auth": {
+                "accessToken": "old",
+                "expiresAt": 1,
+                "refreshExpiresAt": 2,
+                "lastRefreshTime": 0,
+                "scope": "openid"
+            },
+            "account": { "uid": "old", "nickname": "n", "phoneNumber": "p", "uin": 1 },
+            "accounts": [{ "uid": "old", "nickname": "n", "phoneNumber": "p", "uin": 1 }],
+            "allAccounts": [{ "uid": "old", "nickname": "n", "phoneNumber": "p", "uin": 1 }]
+        });
+        let target = crate::account_store::Account {
+            uid: "new".into(),
+            file: "f.json".into(),
+            path: std::path::PathBuf::new(),
+            domain: "www.workbuddy.cn".into(),
+            expires_at: 1_795_082_450,
+            refresh_expires_at: 1_795_255_250,
+            doc: Value::Null,
+        };
+
+        let next = build_next(&current, &target, "a", "r").unwrap();
+        // 客户端是毫秒：写秒等于 1970 年过期
+        assert_eq!(next["auth"]["expiresAt"], 1_795_082_450_000_i64);
+        assert_eq!(next["auth"]["refreshExpiresAt"], 1_795_255_250_000_i64);
+        assert_eq!(next["auth"]["scope"], "openid", "无关字段要保留");
+        assert_eq!(next["account"]["uid"], "new");
+        assert!(next["account"].get("nickname").is_none());
+        assert_eq!(next["accounts"][0]["uid"], "new");
+        assert_eq!(next["allAccounts"][0]["uid"], "new");
+        assert!(next["allAccounts"][0].get("phoneNumber").is_none());
+    }
 
     #[test]
     fn atomic_write_replaces_content() {

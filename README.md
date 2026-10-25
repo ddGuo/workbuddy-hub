@@ -383,6 +383,15 @@ Get-ChildItem "$env:LOCALAPPDATA\cn.workbuddy.hub" -Recurse -Filter *.dmp |
 「打开客户端」入口；历史账号仍会显示，只是切换按钮禁用。凭据本身没有失效，登录任意一个账号后，
 切回来 500ms 内自动恢复。
 
+**切换账号后，客户端要求重新登录。**
+0.1.9 修复：客户端凭据里的 `expiresAt` / `refreshExpiresAt` 是**毫秒**，hub 之前把账号库里
+归一化后的**秒**直接写了回去，客户端认为令牌在 1970 年就过期，于是强制重新登录。
+现在写回毫秒，并同步更新 `accounts` / `allAccounts` 会话快照与 `lastRefreshTime`。
+
+**切换时提示找不到 WorkBuddy.exe。**
+0.1.9 起会额外查注册表卸载项与开始菜单快捷方式，覆盖非标准安装目录；结果会缓存。
+仍然找不到时，可以设环境变量 `WORKBUDDY_ELECTRON_BIN` 指向 `WorkBuddy.exe`。
+
 **`cargo build` 报 TLS / 502。**
 本机代理会拒绝 crates.io，需要配镜像（`~/.cargo/config.toml` 指向 rsproxy）。
 

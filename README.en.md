@@ -413,6 +413,16 @@ and an "Open client" button in the account rail. Historical accounts stay visibl
 button is disabled. The credentials are still valid: sign in to any account, come back, and it
 recovers within 500 ms.
 
+**After switching, the client asks to sign in again.**
+Fixed in 0.1.9: `expiresAt` / `refreshExpiresAt` in the client file are in **milliseconds**, but
+hub wrote the normalized **seconds** from the account library, so the client saw tokens that
+expired in 1970 and forced a re-login. It now writes milliseconds and also refreshes the
+`accounts` / `allAccounts` session snapshot and `lastRefreshTime`.
+
+**"WorkBuddy.exe not found" when switching.**
+0.1.9 also checks the uninstall registry entries and Start Menu shortcut, covering non-standard
+install paths (result cached). If it still fails, set `WORKBUDDY_ELECTRON_BIN` to the exe path.
+
 **`cargo build` fails with TLS / 502.**
 A local proxy is rejecting crates.io; configure a mirror (`~/.cargo/config.toml` pointing at rsproxy).
 

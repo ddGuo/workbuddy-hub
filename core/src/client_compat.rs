@@ -33,28 +33,97 @@ pub fn exe_candidates() -> Vec<PathBuf> {
         out.push(p);
     }
 
-    // 3. 常见安装位置
+    // 3. 注册表卸载项 / 开始菜单快捷方式（新机器装在非标准目录时最有用）
+    out.extend(registry_candidates());
+
+    // 4. 常见安装位置
     for root in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
         if let Ok(dir) = std::env::var(root) {
             if dir.is_empty() {
                 continue;
             }
             out.push(PathBuf::from(&dir).join("Programs/WorkBuddy/WorkBuddy.exe"));
+            out.push(PathBuf::from(&dir).join("Programs/workbuddy/WorkBuddy.exe"));
             out.push(PathBuf::from(&dir).join("WorkBuddy/WorkBuddy.exe"));
+            out.push(PathBuf::from(&dir).join("workbuddy/WorkBuddy.exe"));
         }
     }
-    // 4. 非标准盘符（本机实测在 D:）
+    // 5. 非标准盘符（本机实测在 D:）
     for drive in ["C", "D", "E", "F"] {
         out.push(PathBuf::from(format!("{drive}:/WorkBuddy/WorkBuddy.exe")));
+        out.push(PathBuf::from(format!(
+            "{drive}:/Program Files/WorkBuddy/WorkBuddy.exe"
+        )));
     }
 
     out.dedup();
     out
 }
 
-/// 在候选里找第一个真实存在的。
+/// 从注册表卸载项与开始菜单快捷方式里找。
+///
+/// 不调用 reg.exe：部分安全策略会拦它。用 PowerShell 一次性读，
+/// 结果会被 `find_exe` 缓存，不会每次切号都启动进程。
+fn registry_candidates() -> Vec<PathBuf> {
+    let script = r#"$out=@()
+$keys=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
+Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*WorkBuddy*' } | ForEach-Object { if ($_.DisplayIcon) { $out += $_.DisplayIcon }; if ($_.InstallLocation) { $out += $_.InstallLocation } }
+$lnk = Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Recurse -Filter '*WorkBuddy*.lnk' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($lnk) { $out += (New-Object -ComObject WScript.Shell).CreateShortcut($lnk.FullName).TargetPath }
+$out"#;
+    let Ok(res) = proc::hidden("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !res.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&res.stdout)
+        .lines()
+        .filter_map(parse_install_line)
+        .collect()
+}
+
+/// 解析一行安装信息：`"D:\WorkBuddy\WorkBuddy.exe",0` 或安装目录。
+fn parse_install_line(line: &str) -> Option<PathBuf> {
+    let s = line.trim().trim_matches('"');
+    if s.is_empty() {
+        return None;
+    }
+    // DisplayIcon 形如 `C:\App\WorkBuddy.exe,0`
+    let path = s.split(',').next().unwrap_or(s).trim().trim_matches('"');
+    if path.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(path);
+    if path.to_lowercase().ends_with(".exe") {
+        Some(p)
+    } else if p.is_dir() {
+        Some(p.join("WorkBuddy.exe"))
+    } else {
+        None
+    }
+}
+
+static EXE_CACHE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+/// 在候选里找第一个真实存在的（结果缓存，避免每 30 秒重复探测）。
 pub fn find_exe() -> Option<PathBuf> {
-    exe_candidates().into_iter().find(|p| p.is_file())
+    let cache = EXE_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some(p) = guard.as_ref() {
+            if p.is_file() {
+                return Some(p.clone());
+            }
+        }
+    }
+    let found = exe_candidates().into_iter().find(|p| p.is_file());
+    if let Ok(mut guard) = cache.lock() {
+        *guard = found.clone();
+    }
+    found
 }
 
 /// 通过 tasklist 找正在运行的 WorkBuddy 进程路径。
@@ -345,6 +414,19 @@ mod tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn parses_install_icon_line() {
+        assert_eq!(
+            parse_install_line("\"D:\\WorkBuddy\\WorkBuddy.exe\",0"),
+            Some(PathBuf::from("D:\\WorkBuddy\\WorkBuddy.exe"))
+        );
+        assert_eq!(
+            parse_install_line("C:\\Apps\\WorkBuddy\\WorkBuddy.exe"),
+            Some(PathBuf::from("C:\\Apps\\WorkBuddy\\WorkBuddy.exe"))
+        );
+        assert!(parse_install_line("").is_none());
     }
 
     #[test]

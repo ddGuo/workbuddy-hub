@@ -1606,7 +1606,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hub-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4847,7 +4847,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "workbuddy-hub"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "hub-core",
  "serde",
