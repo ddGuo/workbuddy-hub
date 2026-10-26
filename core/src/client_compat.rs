@@ -39,27 +39,41 @@ pub fn exe_candidates() -> Vec<PathBuf> {
         out.push(p);
     }
 
-    // 3. 注册表卸载项 / 开始菜单快捷方式（新机器装在非标准目录时最有用）
-    out.extend(registry_candidates());
+    #[cfg(target_os = "windows")]
+    {
+        // 注册表卸载项 / 开始菜单快捷方式（新机器装在非标准目录时最有用）
+        out.extend(registry_candidates());
 
-    // 4. 常见安装位置
-    for root in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
-        if let Ok(dir) = std::env::var(root) {
-            if dir.is_empty() {
-                continue;
+        // 常见安装位置
+        for root in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+            if let Ok(dir) = std::env::var(root) {
+                if dir.is_empty() {
+                    continue;
+                }
+                out.push(PathBuf::from(&dir).join("Programs/WorkBuddy/WorkBuddy.exe"));
+                out.push(PathBuf::from(&dir).join("Programs/workbuddy/WorkBuddy.exe"));
+                out.push(PathBuf::from(&dir).join("WorkBuddy/WorkBuddy.exe"));
+                out.push(PathBuf::from(&dir).join("workbuddy/WorkBuddy.exe"));
             }
-            out.push(PathBuf::from(&dir).join("Programs/WorkBuddy/WorkBuddy.exe"));
-            out.push(PathBuf::from(&dir).join("Programs/workbuddy/WorkBuddy.exe"));
-            out.push(PathBuf::from(&dir).join("WorkBuddy/WorkBuddy.exe"));
-            out.push(PathBuf::from(&dir).join("workbuddy/WorkBuddy.exe"));
+        }
+        // 非标准盘符（本机实测在 D:）
+        for drive in ["C", "D", "E", "F"] {
+            out.push(PathBuf::from(format!("{drive}:/WorkBuddy/WorkBuddy.exe")));
+            out.push(PathBuf::from(format!(
+                "{drive}:/Program Files/WorkBuddy/WorkBuddy.exe"
+            )));
         }
     }
-    // 5. 非标准盘符（本机实测在 D:）
-    for drive in ["C", "D", "E", "F"] {
-        out.push(PathBuf::from(format!("{drive}:/WorkBuddy/WorkBuddy.exe")));
-        out.push(PathBuf::from(format!(
-            "{drive}:/Program Files/WorkBuddy/WorkBuddy.exe"
-        )));
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        for app in [
+            "/Applications/WorkBuddy.app".to_string(),
+            format!("{home}/Applications/WorkBuddy.app"),
+        ] {
+            out.push(PathBuf::from(app).join("Contents/MacOS/WorkBuddy"));
+        }
     }
 
     out.dedup();
@@ -70,6 +84,7 @@ pub fn exe_candidates() -> Vec<PathBuf> {
 ///
 /// 不调用 reg.exe：部分安全策略会拦它。用 PowerShell 一次性读，
 /// 结果会被 `find_exe` 缓存，不会每次切号都启动进程。
+#[cfg(target_os = "windows")]
 fn registry_candidates() -> Vec<PathBuf> {
     let script = r#"$out=@()
 $keys=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
@@ -93,6 +108,7 @@ $out"#;
 }
 
 /// 解析一行安装信息：`"D:\WorkBuddy\WorkBuddy.exe",0` 或安装目录。
+#[cfg(target_os = "windows")]
 fn parse_install_line(line: &str) -> Option<PathBuf> {
     let s = line.trim().trim_matches('"');
     if s.is_empty() {
@@ -134,6 +150,7 @@ pub fn find_exe() -> Option<PathBuf> {
 
 /// 通过 tasklist 找正在运行的 WorkBuddy 进程路径。
 /// 不引第三方依赖，解析 CSV 输出即可。
+#[cfg(target_os = "windows")]
 fn running_process_path() -> Option<PathBuf> {
     let out = proc::hidden("tasklist")
         .args(["/FI", "IMAGENAME eq WorkBuddy.exe", "/FO", "CSV", "/NH"])
@@ -163,19 +180,68 @@ fn running_process_path() -> Option<PathBuf> {
     }
 }
 
-/// 凭据文件路径（Local 优先，Roaming 兜底）。
+#[cfg(target_os = "macos")]
+fn running_process_path() -> Option<PathBuf> {
+    let out = proc::hidden("pgrep")
+        .args(["-f", "WorkBuddy.app/Contents/MacOS/WorkBuddy"])
+        .output()
+        .ok()?;
+    let pid = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+    if pid.is_empty() {
+        return None;
+    }
+    let ps = proc::hidden("ps")
+        .args(["-p", &pid, "-o", "comm="])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&ps.stdout).trim().to_string();
+    if path.contains("WorkBuddy") {
+        Some(PathBuf::from(path))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn running_process_path() -> Option<PathBuf> {
+    None
+}
+
+/// 凭据文件路径（Windows：Local 优先，Roaming 兜底）。
 pub fn auth_file() -> Option<PathBuf> {
-    let mut roots = Vec::new();
-    if let Ok(v) = std::env::var("LOCALAPPDATA") {
-        roots.push(PathBuf::from(v));
+    #[cfg(target_os = "windows")]
+    {
+        let mut roots = Vec::new();
+        if let Ok(v) = std::env::var("LOCALAPPDATA") {
+            roots.push(PathBuf::from(v));
+        }
+        if let Ok(v) = std::env::var("APPDATA") {
+            roots.push(PathBuf::from(v));
+        }
+        return roots
+            .into_iter()
+            .map(|r| r.join(AUTH_SUBPATH))
+            .find(|p| p.is_file());
     }
-    if let Ok(v) = std::env::var("APPDATA") {
-        roots.push(PathBuf::from(v));
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").ok()?;
+        let candidates = [
+            PathBuf::from(&home)
+                .join("Library/Application Support")
+                .join(AUTH_SUBPATH),
+            PathBuf::from(&home).join(".config").join(AUTH_SUBPATH),
+        ];
+        return candidates.into_iter().find(|p| p.is_file());
     }
-    roots
-        .into_iter()
-        .map(|r| r.join(AUTH_SUBPATH))
-        .find(|p| p.is_file())
+
+    #[allow(unreachable_code)]
+    None
 }
 
 /// 数据根目录（`~/.workbuddy`）。
@@ -440,6 +506,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn parses_install_icon_line() {
         assert_eq!(

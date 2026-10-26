@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # 缓存 cargo 的编译产物，第二次构建能省掉大部分时间
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
@@ -36,8 +35,59 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
-      - name: Build (Tauri CLI，前端会嵌进二进制)
+      - name: Build (Windows)
         run: npx tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/workbuddy-hub.exe
+
+  # macOS：在 macos-latest 上出 universal DMG（Intel + Apple Silicon）
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: macos-universal
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build (macOS universal)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '10.15'
+        run: npx tauri build --target universal-apple-darwin --bundles dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundle
+          if-no-files-found: error
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+  publish:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -48,5 +98,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/workbuddy-hub.exe
+            artifacts/*.exe
+            artifacts/*.dmg

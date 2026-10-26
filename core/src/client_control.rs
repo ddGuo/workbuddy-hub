@@ -49,7 +49,15 @@ pub fn is_running() -> bool {
             .map(|o| output_has_client(&o.stdout))
             .unwrap_or(false)
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    {
+        proc::hidden("pgrep")
+            .args(["-f", "WorkBuddy.app/Contents/MacOS/WorkBuddy"])
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         false
     }
@@ -72,6 +80,14 @@ pub fn quit(timeout: Duration) -> Result<bool> {
         // 不带 /F：发 WM_CLOSE，让 Electron 走正常退出流程
         let _ = proc::run_hidden("taskkill", &["/IM", "WorkBuddy.exe", "/T"]);
     }
+    #[cfg(target_os = "macos")]
+    {
+        // AppleScript 的 quit 等价于 Cmd+Q，让 Electron 正常收尾
+        let _ = proc::run_hidden(
+            "osascript",
+            &["-e", r#"tell application "WorkBuddy" to quit"#],
+        );
+    }
 
     if wait_until(|| !is_running(), timeout) {
         return Ok(true);
@@ -80,6 +96,10 @@ pub fn quit(timeout: Duration) -> Result<bool> {
     #[cfg(target_os = "windows")]
     {
         let _ = proc::run_hidden("taskkill", &["/F", "/IM", "WorkBuddy.exe", "/T"]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = proc::run_hidden("pkill", &["-f", "WorkBuddy.app/Contents/MacOS/WorkBuddy"]);
     }
     if wait_until(|| !is_running(), FORCE_WAIT) {
         return Ok(false);
