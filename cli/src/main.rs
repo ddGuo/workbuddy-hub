@@ -30,6 +30,7 @@ fn main() -> Result<()> {
 
     match cmd {
         "probe" => cmd_probe(),
+        "secret" => cmd_secret(),
         "accounts" => cmd_accounts(),
         "tasks" => cmd_tasks(&args[1..]),
         "verify" => cmd_verify(),
@@ -60,6 +61,7 @@ fn print_help() {
     println!("用法：hub <命令>");
     println!();
     println!("  probe      探测客户端位置、凭据文件、数据目录");
+    println!("  secret     逐个候选试探 at-rest 密钥，报告每处的结果（不打印密钥）");
     println!("  accounts   列出账号库（含任务数、凭据到期）");
     println!("  tasks      列出所有账号的任务（可加 --uid <前缀> 过滤）");
     println!("  verify     用 at-rest 密钥逐个解密账号凭据，验证可用性");
@@ -104,17 +106,25 @@ fn cmd_probe() -> Result<()> {
         if accounts.is_dir() { "" } else { "(不存在)" }
     );
 
-    if let Some(exe) = client_compat::find_exe() {
+    if let Some(_exe) = client_compat::find_exe() {
         println!();
         println!("== at-rest 密钥 ==");
-        match client_compat::at_rest_secret(&exe) {
-            Ok(secret) => {
-                let key = AtRestKey::from_secret(&secret);
-                println!("  取密钥成功，keyId = {}", key.key_id());
-            }
-            Err(e) => println!("  取密钥失败：{e:#}"),
+        // 逐个候选跑一遍（不打印密钥本身），失败时能看出是 exe 找错还是
+        // 客户端不认 ELECTRON_RUN_AS_NODE
+        for line in client_compat::probe_report().lines() {
+            println!("  {line}");
         }
     }
+    Ok(())
+}
+
+fn cmd_secret() -> Result<()> {
+    println!("== at-rest 密钥探测 ==");
+    for line in client_compat::probe_report().lines() {
+        println!("  {line}");
+    }
+    println!();
+    println!("失败详情同时写入 %USERPROFILE%\\.workbuddy-hub\\secret-probe.log");
     Ok(())
 }
 

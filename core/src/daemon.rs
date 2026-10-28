@@ -27,6 +27,9 @@ pub struct RuntimeState {
     pub cooldowns: BTreeMap<String, Cooldown>,
     /// 已处理过的 session id，避免重复动作
     pub handled: Vec<String>,
+    /// 界面已经提醒过的「会话@时间」。持久化，重启后不重播。
+    #[serde(default)]
+    pub alerted: Vec<String>,
     pub last_scan: i64,
 }
 
@@ -123,6 +126,12 @@ pub fn scan(
                 continue;
             }
             state.handled.push(key);
+            // 这张表是持久化的（重启后不该把十分钟前的限流重新弹一遍），
+            // 但也不能无限长，只留最近 400 条。
+            if state.handled.len() > 400 {
+                let cut = state.handled.len() - 400;
+                state.handled.drain(0..cut);
+            }
             out.push(sig);
         }
     }
