@@ -287,7 +287,8 @@ hub checkin --uid 128a8f9c    # 只处理一个账号
 
 ## 命令行
 
-`hub` 在 `target/debug/hub`（`cargo build` 后）。
+`hub` 在 `target/debug/hub`（`cargo build` 后），`cargo build --release -p hub-cli`
+产出单文件 `target/release/hub.exe`，发布包里也会带一份，拷到别的电脑上直接能跑。
 
 ```bash
 hub probe                 # 探测客户端位置、凭据文件、数据目录

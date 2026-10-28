@@ -39,6 +39,11 @@ jobs:
       - name: Build (Tauri CLI，前端会嵌进二进制)
         run: npx tauri build
 
+      # 诊断工具：hub probe / secret / accounts / checkin …
+      # 别的电脑上报「取不到密钥」时，把 hub.exe 拷过去跑一条命令就能定位
+      - name: Build CLI
+        run: cargo build --release -p hub-cli
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -50,3 +55,4 @@ jobs:
           files: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/workbuddy-hub.exe
+            target/release/hub.exe
