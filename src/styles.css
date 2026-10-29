@@ -1749,6 +1749,30 @@ input {
   gap: 6px;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mini.danger {
+  color: var(--err);
+  border-color: transparent;
+}
+
+.mini.danger:hover:not(:disabled) {
+  border-color: var(--err);
+}
+
+.btn.danger {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
+
 .switch-wrap {
   display: inline-flex;
 }

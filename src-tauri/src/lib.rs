@@ -197,6 +197,28 @@ fn list_accounts() -> Result<Vec<account_store::AccountSummary>, String> {
     Ok(accounts.iter().map(|a| a.summary()).collect())
 }
 
+/// 删除本机账号存档。当前正在使用的账号不允许删。
+#[tauri::command]
+async fn delete_account(app: tauri::AppHandle, uid: String) -> Result<(), String> {
+    on_blocking(move || delete_account_blocking(&app, &uid)).await
+}
+
+fn delete_account_blocking(app: &tauri::AppHandle, uid: &str) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
+    if let Some(auth) = client_compat::auth_file() {
+        if let Ok(current) = switch_engine::current_uid(&auth) {
+            if current == uid {
+                return Err("当前正在使用的账号不能删除，请先切换到别的账号".into());
+            }
+        }
+    }
+    account_store::delete_account(&dir, uid).map_err(|e| e.to_string())?;
+    let _ = app.emit("accounts-updated", "");
+    Ok(())
+}
+
 #[tauri::command]
 fn current_uid() -> Result<String, String> {
     let path = client_compat::auth_file().ok_or_else(no_login)?;
@@ -1342,6 +1364,7 @@ pub fn run() {
             probe_model,
             export_credentials,
             import_credentials,
+            delete_account,
             checkin_run,
             checkin_set_auto,
             profiles_overview,

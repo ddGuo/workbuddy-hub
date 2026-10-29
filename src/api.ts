@@ -144,6 +144,11 @@ export async function unifyStatus(): Promise<Ownership> {
   return invoke<Ownership>('unify_status');
 }
 
+export async function deleteAccount(uid: string): Promise<void> {
+  if (!isTauri) throw new Error('浏览器预览不支持删除账号');
+  return invoke<void>('delete_account', { uid });
+}
+
 export async function exportCredentials(path: string, password: string): Promise<number> {
   if (!isTauri) throw new Error('浏览器预览不支持导出凭据');
   return invoke<number>('export_credentials', { path, password });

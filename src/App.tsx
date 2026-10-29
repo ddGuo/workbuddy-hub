@@ -14,6 +14,7 @@ import {
   creditsRefresh,
   probeModel,
   exportCredentials,
+  deleteAccount,
   importCredentials,
   syncAccounts,
   describeError,
@@ -176,6 +177,12 @@ export default function App() {
   });
   const [quickSwitching, setQuickSwitching] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
+  const [delTarget, setDelTarget] = useState<{ uid: string; short_uid: string } | null>(() => {
+    if (isTauri) return null;
+    if (new URLSearchParams(window.location.search).get('del') !== '1') return null;
+    return { uid: '4dba68a4-797f-4a97-a7e0-a23b261a3d48', short_uid: '4dba68a4' };
+  });
+  const [delBusy, setDelBusy] = useState(false);
   const [credModal, setCredModal] = useState<{
     mode: 'export' | 'import';
     path: string;
@@ -676,6 +683,24 @@ export default function App() {
     }
   }
 
+  async function confirmDelete() {
+    if (!delTarget || delBusy) return;
+    setDelBusy(true);
+    try {
+      await deleteAccount(delTarget.uid);
+      setToast({
+        kind: 'ok',
+        text: `已删除 ${labelOf(delTarget.uid, delTarget.short_uid)} 的本机凭据`,
+      });
+      setDelTarget(null);
+      await load();
+    } catch (e) {
+      setToast({ kind: 'err', text: describeError(e).text });
+    } finally {
+      setDelBusy(false);
+    }
+  }
+
   async function submitCred() {
     if (!credModal || credModal.busy) return;
     const pwd = credModal.password;
@@ -1068,33 +1093,44 @@ export default function App() {
                         )}
                       </div>
                     </div>
-                    {a.isCurrent ? (
-                      <span className="current-tag">当前</span>
-                    ) : (
-                      <span
-                        className="switch-wrap"
-                        onMouseEnter={(e) => {
-                          const text = [blocked, limitTip(a.uid)].filter(Boolean).join('\n');
-                          if (!text) return;
-                          const r = e.currentTarget.getBoundingClientRect();
-                          setHoverTip({
-                            text,
-                            // 放在按钮右侧，避免盖住账号行导致看不清
-                            left: Math.min(r.right + 10, window.innerWidth - 260),
-                            top: r.top,
-                          });
-                        }}
-                        onMouseLeave={() => setHoverTip(null)}
-                      >
-                        <button
-                          className="mini"
-                          disabled={blocked !== null}
-                          onClick={() => void openSwitchDialog(a.uid)}
+                    <span className="row-actions">
+                      {a.isCurrent ? (
+                        <span className="current-tag">当前</span>
+                      ) : (
+                        <span
+                          className="switch-wrap"
+                          onMouseEnter={(e) => {
+                            const text = [blocked, limitTip(a.uid)].filter(Boolean).join('\n');
+                            if (!text) return;
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setHoverTip({
+                              text,
+                              // 放在按钮右侧，避免盖住账号行导致看不清
+                              left: Math.min(r.right + 10, window.innerWidth - 260),
+                              top: r.top,
+                            });
+                          }}
+                          onMouseLeave={() => setHoverTip(null)}
                         >
-                          切换
+                          <button
+                            className="mini"
+                            disabled={blocked !== null}
+                            onClick={() => void openSwitchDialog(a.uid)}
+                          >
+                            切换
+                          </button>
+                        </span>
+                      )}
+                      {!a.isCurrent && (
+                        <button
+                          className="mini danger"
+                          title="删除本机凭据存档（不影响客户端登录和任务记录）"
+                          onClick={() => setDelTarget(a)}
+                        >
+                          删除
                         </button>
-                      </span>
-                    )}
+                      )}
+                    </span>
                   </div>
                 );
               })}
@@ -1426,6 +1462,38 @@ export default function App() {
                   切换到 {quickSwitching}，客户端会关闭并重新打开，约 10 秒。
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {delTarget && (
+        <div
+          className="modal-backdrop"
+          onClick={() => !delBusy && setDelTarget(null)}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>删除账号</h2>
+              <p>{labelOf(delTarget.uid, delTarget.short_uid)}</p>
+            </div>
+            <div className="modal-body">
+              <p className="cred-hint">
+                只删除本机保存的凭据存档。客户端里的登录态、任务记录都不受影响；
+                以后再登录该账号，hub 会重新存档。
+              </p>
+            </div>
+            <div className="modal-foot">
+              <button className="btn sm" disabled={delBusy} onClick={() => setDelTarget(null)}>
+                取消
+              </button>
+              <button
+                className="btn danger sm"
+                disabled={delBusy}
+                onClick={() => void confirmDelete()}
+              >
+                {delBusy ? '删除中…' : '删除'}
+              </button>
             </div>
           </div>
         </div>

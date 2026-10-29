@@ -9,7 +9,7 @@
 use crate::auth_crypto::{decrypt_field, is_encrypted, AtRestKey};
 use crate::normalize_ts;
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,6 +115,7 @@ pub fn save_current(auth_path: &Path, dir: &Path) -> Result<Option<String>> {
     fs::create_dir_all(dir)
         .with_context(|| format!("创建账号库目录失败：{}", dir.display()))?;
     let target = dir.join(format!("{uid}.json"));
+    clear_deleted(dir, &uid);
 
     // 令牌可能是明文，也可能是客户端自己的 $wbEncrypted 信封；
     // 原样拷贝，读取时由 read_token 统一处理，不在这里解密。
@@ -153,11 +154,70 @@ pub fn save_current(auth_path: &Path, dir: &Path) -> Result<Option<String>> {
 /// 拷过来。hub 自己的存档不覆盖 —— 它的令牌更新。
 ///
 /// 一次性兼容：目录不存在时返回 0，调用方可以无条件调用。
+/// 被用户删除过的账号。重新登录会清除标记，之后旧账号库可以再次导入。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeletedAccounts {
+    #[serde(default)]
+    pub uids: Vec<String>,
+}
+
+fn deleted_path(dir: &Path) -> PathBuf {
+    dir.parent().unwrap_or(dir).join("deleted.json")
+}
+
+pub fn deleted_uids(dir: &Path) -> Vec<String> {
+    fs::read_to_string(deleted_path(dir))
+        .ok()
+        .and_then(|t| serde_json::from_str::<DeletedAccounts>(&t).ok())
+        .map(|d| d.uids)
+        .unwrap_or_default()
+}
+
+fn save_deleted(dir: &Path, list: &DeletedAccounts) -> Result<()> {
+    let path = deleted_path(dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, serde_json::to_string_pretty(list)?)?;
+    Ok(())
+}
+
+/// 删除账号存档，并记下墓碑，避免旧账号库的导入把它带回来。
+pub fn delete_account(dir: &Path, uid: &str) -> Result<bool> {
+    let target = dir.join(format!("{uid}.json"));
+    let removed = if target.is_file() {
+        fs::remove_file(&target)?;
+        true
+    } else {
+        false
+    };
+
+    let mut list = DeletedAccounts {
+        uids: deleted_uids(dir),
+    };
+    if !list.uids.iter().any(|u| u == uid) {
+        list.uids.push(uid.to_string());
+        save_deleted(dir, &list)?;
+    }
+    Ok(removed)
+}
+
+fn clear_deleted(dir: &Path, uid: &str) {
+    let mut list = DeletedAccounts {
+        uids: deleted_uids(dir),
+    };
+    if list.uids.iter().any(|u| u == uid) {
+        list.uids.retain(|u| u != uid);
+        let _ = save_deleted(dir, &list);
+    }
+}
+
 pub fn import_from_dsh(dsh_dir: &Path, dir: &Path) -> Result<usize> {
     if !dsh_dir.is_dir() {
         return Ok(0);
     }
     let mut imported = 0usize;
+    let deleted = deleted_uids(dir);
     for entry in fs::read_dir(dsh_dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -169,6 +229,10 @@ pub fn import_from_dsh(dsh_dir: &Path, dir: &Path) -> Result<usize> {
         }
         let target = dir.join(name);
         if target.exists() {
+            continue;
+        }
+        let stem = name.strip_suffix(".json").unwrap_or(name);
+        if deleted.iter().any(|u| u == stem) {
             continue;
         }
         fs::create_dir_all(dir)
