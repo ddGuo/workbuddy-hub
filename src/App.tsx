@@ -259,7 +259,6 @@ export default function App() {
     const un6 = listen<CreditStore>('credits-updated', (e) => setCredits(e.payload));
     // 后台每 5 秒扫一次会话，发现新限流立刻提醒
     const un7 = listen<LimitAlert>('limit-detected', (e) => {
-      setAlert(e.payload);
       setLimits((prev) => {
         const rest = prev.filter(
           (l) =>
@@ -270,6 +269,10 @@ export default function App() {
         );
         return [e.payload.signal, ...rest];
       });
+      // 窗口在托盘里时不弹卡片：看不见，而且系统通知已经发过了。
+      // 回来时列表上方的限流提示照样在。
+      if (document.visibilityState !== 'visible') return;
+      setAlert(e.payload);
     });
     progressRef.current = () => {
       void un1.then((f) => f());

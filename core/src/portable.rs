@@ -24,7 +24,6 @@ use anyhow::{bail, Context, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const FORMAT: &str = "workbuddy-hub-credentials";
@@ -208,6 +207,7 @@ fn pbkdf2(password: &[u8], salt: &[u8], iterations: u32, out_len: usize) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     fn sample() -> ExportPayload {
         ExportPayload {

@@ -15,12 +15,31 @@ const AUTH_SUBPATH: &str = "CodeBuddyExtension/Data/Public/auth/workbuddy-deskto
 
 /// 用来取出 at-rest 密钥的脚本。输出是 JSON，其中含 `atRestSecretKey`。
 ///
-/// 新版客户端里 `loggerGet()` 可能返回**对象**而不是字符串，
-/// 直接 `String(...)` 会得到 `[object Object]`，解析端就会报“找不到 JSON”。
-/// 这里字符串原样输出，其它类型统一 JSON 序列化。
-const SECRET_SCRIPT: &str = r#"(() => {
-  const s = process._linkedBinding("electron_browser_workbuddy_storage").loggerGet();
-  process.stdout.write(typeof s === "string" ? s : JSON.stringify(s));
+/// 三个坑都是在别的电脑上才暴露出来的：
+/// - 新版客户端 `loggerGet()` 返回**对象**而不是字符串，`String(...)` 会得到
+///   `[object Object]`，解析端就报“找不到 JSON”；
+/// - Windows 上 `process.stdout.write` 是**异步**的，脚本写完立刻退出，
+///   输出可能整段丢掉 —— 父进程看到的就是空 stdout / 空 stderr；
+/// - 从 GUI 进程启动时，个别环境下 fd 1 根本不是有效句柄，写 stdout 直接失败。
+///
+/// 所以改成 `fs.writeSync` 同步写，并且**再写一份临时文件**（路径由
+/// `WORKBUDDY_SECRET_OUT` 传入），Rust 侧在 stdout 为空时回读文件。
+const SECRET_SCRIPT: &str = r#"(function () {
+  var fs = require("fs");
+  var out = process.env.WORKBUDDY_SECRET_OUT;
+  function emit(text) {
+    try { fs.writeSync(1, text); } catch (e) {}
+    if (out) { try { fs.writeFileSync(out, text); } catch (e) {} }
+  }
+  try {
+    var s = process._linkedBinding("electron_browser_workbuddy_storage").loggerGet();
+    emit(typeof s === "string" ? s : JSON.stringify(s));
+  } catch (e) {
+    var msg = "SCRIPT_ERROR: " + (e && e.stack ? e.stack : String(e));
+    try { fs.writeSync(2, msg); } catch (_) {}
+    if (out) { try { fs.writeFileSync(out + ".err", msg); } catch (_) {} }
+    process.exitCode = 1;
+  }
 })()"#;
 
 /// 按优先级列出候选可执行文件路径。
@@ -39,44 +58,81 @@ pub fn exe_candidates() -> Vec<PathBuf> {
         out.push(p);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        // 注册表卸载项 / 开始菜单快捷方式（新机器装在非标准目录时最有用）
-        out.extend(registry_candidates());
+    // 3. 注册表卸载项 / 开始菜单快捷方式（新机器装在非标准目录时最有用）
+    out.extend(registry_candidates());
 
-        // 常见安装位置
-        for root in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
-            if let Ok(dir) = std::env::var(root) {
-                if dir.is_empty() {
-                    continue;
-                }
-                out.push(PathBuf::from(&dir).join("Programs/WorkBuddy/WorkBuddy.exe"));
-                out.push(PathBuf::from(&dir).join("Programs/workbuddy/WorkBuddy.exe"));
-                out.push(PathBuf::from(&dir).join("WorkBuddy/WorkBuddy.exe"));
-                out.push(PathBuf::from(&dir).join("workbuddy/WorkBuddy.exe"));
+    // 3.5 Squirrel 布局：`%LOCALAPPDATA%\WorkBuddy\app-<版本>\WorkBuddy.exe`
+    out.extend(squirrel_candidates());
+
+    // 4. 常见安装位置
+    for root in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        if let Ok(dir) = std::env::var(root) {
+            if dir.is_empty() {
+                continue;
             }
-        }
-        // 非标准盘符（本机实测在 D:）
-        for drive in ["C", "D", "E", "F"] {
-            out.push(PathBuf::from(format!("{drive}:/WorkBuddy/WorkBuddy.exe")));
-            out.push(PathBuf::from(format!(
-                "{drive}:/Program Files/WorkBuddy/WorkBuddy.exe"
-            )));
+            out.push(PathBuf::from(&dir).join("Programs/WorkBuddy/WorkBuddy.exe"));
+            out.push(PathBuf::from(&dir).join("Programs/workbuddy/WorkBuddy.exe"));
+            out.push(PathBuf::from(&dir).join("WorkBuddy/WorkBuddy.exe"));
+            out.push(PathBuf::from(&dir).join("workbuddy/WorkBuddy.exe"));
         }
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").unwrap_or_default();
-        for app in [
-            "/Applications/WorkBuddy.app".to_string(),
-            format!("{home}/Applications/WorkBuddy.app"),
-        ] {
-            out.push(PathBuf::from(app).join("Contents/MacOS/WorkBuddy"));
-        }
+    // 5. 非标准盘符（本机实测在 D:）
+    for drive in ["C", "D", "E", "F"] {
+        out.push(PathBuf::from(format!("{drive}:/WorkBuddy/WorkBuddy.exe")));
+        out.push(PathBuf::from(format!(
+            "{drive}:/Program Files/WorkBuddy/WorkBuddy.exe"
+        )));
     }
 
     out.dedup();
+    // 同一路径可能从注册表、快捷方式、Squirrel 目录各来一次，按去重后的顺序保留
+    let mut seen: Vec<String> = Vec::new();
+    out.retain(|p| {
+        let key = p.display().to_string().to_lowercase();
+        if seen.contains(&key) {
+            false
+        } else {
+            seen.push(key);
+            true
+        }
+    });
+    out
+}
+
+/// Squirrel 布局：`%LOCALAPPDATA%\WorkBuddy\app-<版本>\WorkBuddy.exe`。
+///
+/// 这种安装方式根目录只有一个 `Update.exe` 和启动器，真正的客户端在带版本号的
+/// 子目录里；按版本号倒序，优先最新。
+fn squirrel_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(local) = std::env::var("LOCALAPPDATA") else {
+        return out;
+    };
+    let roots = [
+        PathBuf::from(&local).join("WorkBuddy"),
+        PathBuf::from(&local).join("Programs").join("WorkBuddy"),
+    ];
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        let mut versions: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("app-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        versions.sort();
+        versions.reverse();
+        for v in versions {
+            out.push(v.join("WorkBuddy.exe"));
+        }
+    }
     out
 }
 
@@ -84,7 +140,6 @@ pub fn exe_candidates() -> Vec<PathBuf> {
 ///
 /// 不调用 reg.exe：部分安全策略会拦它。用 PowerShell 一次性读，
 /// 结果会被 `find_exe` 缓存，不会每次切号都启动进程。
-#[cfg(target_os = "windows")]
 fn registry_candidates() -> Vec<PathBuf> {
     let script = r#"$out=@()
 $keys=@('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
@@ -108,7 +163,6 @@ $out"#;
 }
 
 /// 解析一行安装信息：`"D:\WorkBuddy\WorkBuddy.exe",0` 或安装目录。
-#[cfg(target_os = "windows")]
 fn parse_install_line(line: &str) -> Option<PathBuf> {
     let s = line.trim().trim_matches('"');
     if s.is_empty() {
@@ -132,6 +186,9 @@ fn parse_install_line(line: &str) -> Option<PathBuf> {
 static EXE_CACHE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 /// 在候选里找第一个真实存在的（结果缓存，避免每 30 秒重复探测）。
+///
+/// 优先挑**真正的 Electron 主程序**（目录下有 `resources/app.asar`）：
+/// 同一台机器上可能同时存在启动器与主程序，启动器也能 `-e`，但什么都不输出。
 pub fn find_exe() -> Option<PathBuf> {
     let cache = EXE_CACHE.get_or_init(|| Mutex::new(None));
     if let Ok(guard) = cache.lock() {
@@ -141,7 +198,12 @@ pub fn find_exe() -> Option<PathBuf> {
             }
         }
     }
-    let found = exe_candidates().into_iter().find(|p| p.is_file());
+    let existing: Vec<PathBuf> = exe_candidates().into_iter().filter(|p| p.is_file()).collect();
+    let found = existing
+        .iter()
+        .find(|p| looks_like_electron_app(p.as_path()))
+        .cloned()
+        .or_else(|| existing.first().cloned());
     if let Ok(mut guard) = cache.lock() {
         *guard = found.clone();
     }
@@ -150,7 +212,6 @@ pub fn find_exe() -> Option<PathBuf> {
 
 /// 通过 tasklist 找正在运行的 WorkBuddy 进程路径。
 /// 不引第三方依赖，解析 CSV 输出即可。
-#[cfg(target_os = "windows")]
 fn running_process_path() -> Option<PathBuf> {
     let out = proc::hidden("tasklist")
         .args(["/FI", "IMAGENAME eq WorkBuddy.exe", "/FO", "CSV", "/NH"])
@@ -163,85 +224,42 @@ fn running_process_path() -> Option<PathBuf> {
     if !text.contains("WorkBuddy.exe") {
         return None;
     }
-    // 拿不到路径时退回 PowerShell 查询
+    // 拿不到路径时退回 PowerShell 查询；可能有多个进程，取第一个真程序
     let ps = proc::hidden("powershell")
         .args([
             "-NoProfile",
             "-Command",
-            "(Get-Process WorkBuddy -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
+            "(Get-Process WorkBuddy -ErrorAction SilentlyContinue | ForEach-Object { $_.Path } | Select-Object -Unique)",
         ])
         .output()
         .ok()?;
-    let path = String::from_utf8_lossy(&ps.stdout).trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(path))
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn running_process_path() -> Option<PathBuf> {
-    let out = proc::hidden("pgrep")
-        .args(["-f", "WorkBuddy.app/Contents/MacOS/WorkBuddy"])
-        .output()
-        .ok()?;
-    let pid = String::from_utf8_lossy(&out.stdout)
+    let text = String::from_utf8_lossy(&ps.stdout);
+    let paths: Vec<PathBuf> = text
         .lines()
-        .next()?
-        .trim()
-        .to_string();
-    if pid.is_empty() {
-        return None;
-    }
-    let ps = proc::hidden("ps")
-        .args(["-p", &pid, "-o", "comm="])
-        .output()
-        .ok()?;
-    let path = String::from_utf8_lossy(&ps.stdout).trim().to_string();
-    if path.contains("WorkBuddy") {
-        Some(PathBuf::from(path))
-    } else {
-        None
-    }
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    paths
+        .iter()
+        .find(|p| p.is_file() && looks_like_electron_app(p.as_path()))
+        .cloned()
+        .or_else(|| paths.into_iter().find(|p| p.is_file()))
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn running_process_path() -> Option<PathBuf> {
-    None
-}
-
-/// 凭据文件路径（Windows：Local 优先，Roaming 兜底）。
+/// 凭据文件路径（Local 优先，Roaming 兜底）。
 pub fn auth_file() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        let mut roots = Vec::new();
-        if let Ok(v) = std::env::var("LOCALAPPDATA") {
-            roots.push(PathBuf::from(v));
-        }
-        if let Ok(v) = std::env::var("APPDATA") {
-            roots.push(PathBuf::from(v));
-        }
-        return roots
-            .into_iter()
-            .map(|r| r.join(AUTH_SUBPATH))
-            .find(|p| p.is_file());
+    let mut roots = Vec::new();
+    if let Ok(v) = std::env::var("LOCALAPPDATA") {
+        roots.push(PathBuf::from(v));
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        let home = std::env::var("HOME").ok()?;
-        let candidates = [
-            PathBuf::from(&home)
-                .join("Library/Application Support")
-                .join(AUTH_SUBPATH),
-            PathBuf::from(&home).join(".config").join(AUTH_SUBPATH),
-        ];
-        return candidates.into_iter().find(|p| p.is_file());
+    if let Ok(v) = std::env::var("APPDATA") {
+        roots.push(PathBuf::from(v));
     }
-
-    #[allow(unreachable_code)]
-    None
+    roots
+        .into_iter()
+        .map(|r| r.join(AUTH_SUBPATH))
+        .find(|p| p.is_file())
 }
 
 /// 数据根目录（`~/.workbuddy`）。
@@ -291,51 +309,86 @@ pub fn hub_dir() -> Result<PathBuf> {
 const SECRET_TIMEOUT: Duration = Duration::from_secs(8);
 /// 密钥缓存有效期：只有客户端重装 / 密钥轮换才会变。
 const SECRET_TTL: Duration = Duration::from_secs(600);
+/// 失败后的冷却时间。
+///
+/// 失败不缓存，30 秒一轮的积分刷新就会反复起进程；在「客户端主程序不认
+/// `ELECTRON_RUN_AS_NODE`」的机器上，每起一次就等于把客户端窗口叫到前台一次。
+/// 所以失败也记一笔，两分钟内直接返回同一条错误；用户手动点按钮时绕过它。
+const SECRET_FAILURE_TTL: Duration = Duration::from_secs(120);
 
 struct CachedSecret {
-    exe: PathBuf,
     secret: String,
     at: Instant,
 }
 
 static SECRET_CACHE: OnceLock<Mutex<Option<CachedSecret>>> = OnceLock::new();
+static SECRET_FAILURE: OnceLock<Mutex<Option<(Instant, Duration, String)>>> = OnceLock::new();
+/// 每个 exe 的 fuse 结论（路径 + 文件大小时有效）。
+static FUSE_CACHE: OnceLock<Mutex<Vec<(PathBuf, u64, bool)>>> = OnceLock::new();
 /// 同一时刻只允许一个探测进程：并发调用时不要各起一个 Electron。
 static SECRET_PROBE: Mutex<()> = Mutex::new(());
 
 /// 让客户端吐出 at-rest 密钥。
 ///
-/// 结果缓存 10 分钟；失败**不缓存** —— 客户端可能正在启动，下次重试还该有机会。
+/// 结果缓存 10 分钟；失败缓存 2 分钟（见 [`SECRET_FAILURE_TTL`]）。
+/// 会依次尝试「探测到的 exe → 其它看起来是真正 Electron 程序的候选」，
+/// 因为个别机器上找到的 `WorkBuddy.exe` 只是启动器：它能接受参数，
+/// 但既不跑脚本也不输出，静默退 0。
 pub fn at_rest_secret(exe: &Path) -> Result<String> {
-    if let Some(secret) = cached_secret(exe) {
+    at_rest_secret_inner(exe, false)
+}
+
+/// 用户手动触发的动作（点「立即签到」、确认切号）用这个：跳过失败冷却。
+pub fn at_rest_secret_force(exe: &Path) -> Result<String> {
+    at_rest_secret_inner(exe, true)
+}
+
+fn at_rest_secret_inner(exe: &Path, ignore_failure: bool) -> Result<String> {
+    if let Some(secret) = cached_secret() {
         return Ok(secret);
     }
 
     let _guard = SECRET_PROBE.lock().unwrap_or_else(|e| e.into_inner());
     // 拿到锁后再查一次：并发冷启动时只有第一个真的起进程
-    if let Some(secret) = cached_secret(exe) {
+    if let Some(secret) = cached_secret() {
         return Ok(secret);
     }
-
-    // 这条命令会起一个 Node 模式的客户端进程，必须隐藏窗口，
-    // 否则切换账号时会闪一个黑框。
-    let mut cmd = proc::hidden(exe);
-    cmd.arg("-e")
-        .arg(SECRET_SCRIPT)
-        .env("ELECTRON_RUN_AS_NODE", "1");
-
-    let out = run_command_with_timeout(cmd, SECRET_TIMEOUT)
-        .with_context(|| format!("无法启动客户端以获取密钥：{}", exe.display()))?;
-    let secret = parse_secret_output(&out)?;
-
-    let slot = SECRET_CACHE.get_or_init(|| Mutex::new(None));
-    if let Ok(mut guard) = slot.lock() {
-        *guard = Some(CachedSecret {
-            exe: exe.to_path_buf(),
-            secret: secret.clone(),
-            at: Instant::now(),
-        });
+    if !ignore_failure {
+        if let Some(err) = cached_failure() {
+            return Err(anyhow!("{err}"));
+        }
     }
-    Ok(secret)
+
+    let candidates = probe_candidates(exe);
+    let mut notes: Vec<String> = Vec::new();
+    for (i, cand) in candidates.iter().enumerate() {
+        match probe_secret_once(cand, i) {
+            Ok(secret) => {
+                cache_secret(&secret);
+                clear_failure();
+                write_probe_log(&format!("取密钥成功：{}", cand.display()));
+                return Ok(secret);
+            }
+            Err(e) => notes.push(format!("{}：{e}", cand.display())),
+        }
+    }
+
+    let detail = if notes.is_empty() {
+        if run_as_node_disabled(exe) == Some(true) {
+            format!(
+                "客户端 {} 关闭了 Electron 的 RunAsNode 功能，没法用 Node 模式读密钥；签到、手机号、切号都依赖它，请把这个结论反馈给作者",
+                exe.display()
+            )
+        } else {
+            format!("不是可执行文件：{}", exe.display())
+        }
+    } else {
+        notes.join("；")
+    };
+    let msg = format!("读不到客户端密钥。{detail}");
+    write_probe_log(&msg);
+    cache_failure(&msg);
+    Err(anyhow!("{msg}"))
 }
 
 /// 清掉缓存。客户端重装、密钥轮换、解密失败时可以调用。
@@ -345,17 +398,282 @@ pub fn invalidate_at_rest_secret() {
             *guard = None;
         }
     }
+    clear_failure();
 }
 
-fn cached_secret(exe: &Path) -> Option<String> {
+/// 密钥和 exe 路径无关：真正取到密钥的可能是候选里的第二个（第一个是启动器），
+/// 所以缓存只看 TTL，不比对路径 —— 否则每次调用都会把失败的候选再跑一遍。
+fn cached_secret() -> Option<String> {
     let slot = SECRET_CACHE.get()?;
     let guard = slot.lock().ok()?;
     let entry = guard.as_ref()?;
-    if entry.exe == exe && entry.at.elapsed() < SECRET_TTL {
+    if entry.at.elapsed() < SECRET_TTL {
         Some(entry.secret.clone())
     } else {
         None
     }
+}
+
+fn cache_secret(secret: &str) {
+    let slot = SECRET_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some(CachedSecret {
+            secret: secret.to_string(),
+            at: Instant::now(),
+        });
+    }
+}
+
+fn cached_failure() -> Option<String> {
+    let slot = SECRET_FAILURE.get()?;
+    let guard = slot.lock().ok()?;
+    let (at, ttl, msg) = guard.as_ref()?;
+    if at.elapsed() < *ttl {
+        Some(msg.clone())
+    } else {
+        None
+    }
+}
+
+fn cache_failure(msg: &str) {
+    // 「零输出」「RunAsNode 被禁用」都是结构性原因，冷却久一点：
+    // 这种机器上每探一次都可能把客户端窗口叫到前台。
+    let ttl = if msg.contains("没有任何输出") || msg.contains("RunAsNode") {
+        Duration::from_secs(1800)
+    } else {
+        SECRET_FAILURE_TTL
+    };
+    let slot = SECRET_FAILURE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = Some((Instant::now(), ttl, msg.to_string()));
+    }
+}
+
+fn clear_failure() {
+    if let Some(slot) = SECRET_FAILURE.get() {
+        if let Ok(mut guard) = slot.lock() {
+            *guard = None;
+        }
+    }
+}
+
+/// 把失败详情落到 `~/.workbuddy-hub/secret-probe.log`。
+///
+/// 这个错误在别的电脑上偶发，光靠界面截图分不清是「exe 找错」还是
+/// 「客户端不认 Node 模式」，留一份可回传的记录省一轮来回。
+fn write_probe_log(detail: &str) {
+    let Ok(dir) = hub_dir() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("secret-probe.log");
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = old.lines().collect();
+    if lines.len() > 200 {
+        lines = lines[lines.len() - 200..].to_vec();
+    }
+    let mut body = lines.join("\n");
+    if !body.is_empty() {
+        body.push('\n');
+    }
+    body.push_str(&format!(
+        "[{}] {detail}\n",
+        crate::format_ts(crate::now_secs())
+    ));
+    let _ = std::fs::write(path, body);
+}
+
+/// 探测时依次尝试的可执行文件。
+///
+/// 第一个是调用方给的（通常来自 [`find_exe`]），后面补上其它**看起来是真正
+/// Electron 程序**的候选：启动器 / 更新器目录里没有 `resources/app.asar`，
+/// 拿它们跑脚本只会得到零输出。
+fn probe_candidates(exe: &Path) -> Vec<PathBuf> {
+    let mut raw: Vec<PathBuf> = Vec::new();
+    if exe.is_file() {
+        raw.push(exe.to_path_buf());
+    }
+    for cand in exe_candidates() {
+        if raw.len() >= 4 {
+            break;
+        }
+        if !cand.is_file() || raw.contains(&cand) {
+            continue;
+        }
+        if !looks_like_electron_app(&cand) {
+            continue;
+        }
+        raw.push(cand);
+    }
+    // 明确关掉 RunAsNode 的客户端连试都别试：那等于把它当普通 GUI 启动一次，
+    // 除了把客户端窗口叫到前台、什么都不产出。
+    raw.into_iter()
+        .filter(|p| run_as_node_disabled(p) != Some(true))
+        .collect()
+}
+
+/// Electron fuse 的哨兵串，后面依次是 version / count / 每个 fuse 一个字节。
+///
+/// `RunAsNode` 是第一个 fuse：`0x30` 关、`0x31` 开。关掉之后
+/// `ELECTRON_RUN_AS_NODE` 会被忽略，客户端当成一次普通启动 —— 因为已经有实例
+/// 在跑，第二个进程把 argv 转给主实例就退出，退出码 0、stdout/stderr 全空。
+const FUSE_SENTINEL: &[u8] = b"dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
+
+/// 客户端是否**明确**关掉了 RunAsNode。`None` 表示没找到 fuse 信息（不是 Electron）。
+///
+/// 结果按「路径 + 文件大小」缓存：这是 200MB 的 exe，不缓存等于每轮都读一遍。
+fn run_as_node_disabled(exe: &Path) -> Option<bool> {
+    use std::io::Read;
+
+    let len = std::fs::metadata(exe).ok()?.len();
+    let cache = FUSE_CACHE.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some((_, _, v)) = guard.iter().find(|(p, l, _)| p.as_path() == exe && *l == len) {
+            return Some(*v);
+        }
+    }
+
+    let mut file = std::fs::File::open(exe).ok()?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut tail: Vec<u8> = Vec::new();
+    let mut found: Option<bool> = None;
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        let mut window = tail.clone();
+        window.extend_from_slice(&buf[..n]);
+        if let Some(pos) = find_subslice(&window, FUSE_SENTINEL) {
+            let at = pos + FUSE_SENTINEL.len();
+            // version(1) + count(1) + fuses...
+            if window.len() >= at + 3 && window[at + 1] > 0 {
+                found = Some(window[at + 2] == 0x30);
+            }
+            break;
+        }
+        let keep = FUSE_SENTINEL.len().saturating_sub(1);
+        let keep = keep.min(window.len());
+        tail = window[window.len() - keep..].to_vec();
+    }
+
+    if let Some(v) = found {
+        if let Ok(mut guard) = cache.lock() {
+            guard.push((exe.to_path_buf(), len, v));
+        }
+    }
+    found
+}
+
+/// 逐字节找子串。文件有 200MB，不能用 `windows().position()`：
+/// 每轮都构造一个迭代器，跑下来要几十秒。
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    let first = needle[0];
+    let mut i = 0;
+    while i + needle.len() <= hay.len() {
+        if hay[i] == first && &hay[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// 目录里有没有 Electron 的 `resources`（`app.asar` / `app` / `default_app.asar`）。
+///
+/// 用来把真正的客户端主程序和「同名启动器」区分开：启动器的输出永远是空的，
+/// 那是另一台电脑上报「找不到 JSON（stdout: / stderr: ）」的直接原因。
+fn looks_like_electron_app(exe: &Path) -> bool {
+    let Some(dir) = exe.parent() else {
+        return false;
+    };
+    let res = dir.join("resources");
+    res.join("app.asar").is_file() || res.join("app").is_dir() || res.join("default_app.asar").is_file()
+}
+
+/// 诊断用：逐个候选跑一遍，报告每个位置的结果（**不输出密钥本身**）。
+///
+/// 别的电脑上报「找不到 JSON」时，让用户跑 `hub secret` 把这段贴回来，
+/// 就能分清是「exe 找错」还是「客户端不认 Node 模式」。
+pub fn probe_report() -> String {
+    let exe = find_exe();
+    let mut lines: Vec<String> = Vec::new();
+    match &exe {
+        Some(p) => {
+            lines.push(format!("客户端主程序：{}", p.display()));
+            lines.push(format!("Electron 目录（有 resources）：{}", looks_like_electron_app(p)));
+            lines.push(format!(
+                "RunAsNode fuse：{}",
+                match run_as_node_disabled(p) {
+                    Some(true) => "已禁用（这个版本读不出密钥）",
+                    Some(false) => "已启用",
+                    None => "未找到 fuse 信息",
+                }
+            ));
+        }
+        None => lines.push("没找到 WorkBuddy.exe".to_string()),
+    }
+    let primary = exe.clone().unwrap_or_default();
+    let candidates = probe_candidates(&primary);
+    if candidates.is_empty() {
+        lines.push("没有可试的候选".to_string());
+    }
+    for (i, cand) in candidates.iter().enumerate() {
+        match probe_secret_once(cand, i) {
+            Ok(secret) => {
+                let key = crate::auth_crypto::AtRestKey::from_secret(&secret);
+                lines.push(format!("{} → 成功，keyId={}", cand.display(), key.key_id()));
+            }
+            Err(e) => lines.push(format!("{} → 失败：{e}", cand.display())),
+        }
+    }
+    lines.join("\n")
+}
+
+/// 跑一次探测：脚本走 stdin 之外的临时文件兜底，避免输出被吞。
+fn probe_secret_once(exe: &Path, index: usize) -> Result<String> {
+    let stamp = format!("{}-{index}", std::process::id());
+    let out_file = std::env::temp_dir().join(format!("workbuddy-hub-secret-{stamp}.json"));
+    let err_file = std::env::temp_dir().join(format!("workbuddy-hub-secret-{stamp}.json.err"));
+    let _ = std::fs::remove_file(&out_file);
+    let _ = std::fs::remove_file(&err_file);
+
+    // 这条命令会起一个 Node 模式的客户端进程，必须隐藏窗口，
+    // 否则切换账号时会闪一个黑框。
+    let mut cmd = proc::hidden(exe);
+    cmd.arg("-e")
+        .arg(SECRET_SCRIPT)
+        .env("ELECTRON_RUN_AS_NODE", "1")
+        .env("WORKBUDDY_SECRET_OUT", &out_file);
+
+    let captured = run_command_with_timeout(cmd, SECRET_TIMEOUT)
+        .with_context(|| format!("无法启动：{}", exe.display()));
+
+    // stdout 可能因为异步写、句柄无效而整段丢掉，脚本同时写了一份临时文件
+    let file_out = std::fs::read_to_string(&out_file).ok();
+    let file_err = std::fs::read_to_string(&err_file).ok();
+    let _ = std::fs::remove_file(&out_file);
+    let _ = std::fs::remove_file(&err_file);
+
+    let out = captured?;
+    let mut extra = file_out.unwrap_or_default();
+    if let Some(e) = file_err {
+        if !extra.contains(&e) {
+            if !extra.is_empty() {
+                extra.push('\n');
+            }
+            extra.push_str(&e);
+        }
+    }
+    let extra = if extra.trim().is_empty() {
+        None
+    } else {
+        Some(extra.as_str())
+    };
+    parse_secret_output_with(&out, extra)
 }
 
 struct CapturedOutput {
@@ -433,43 +751,79 @@ fn run_command_with_timeout(mut cmd: std::process::Command, timeout: Duration) -
     })
 }
 
+#[cfg(test)]
 fn parse_secret_output(out: &CapturedOutput) -> Result<String> {
+    parse_secret_output_with(out, None)
+}
+
+/// 解析客户端输出。`extra` 是脚本额外写到临时文件的那一份（stdout 被吞时的兜底）。
+fn parse_secret_output_with(out: &CapturedOutput, extra: Option<&str>) -> Result<String> {
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+    let extra = extra.unwrap_or("").to_string();
+
+    // 三处都找一遍：stdout 最正常，stderr 是日志重定向，extra 是文件兜底
+    let mut saw_json = false;
+    let mut snippet = String::new();
+    for raw in [&stdout, &stderr, &extra] {
+        let Some(value) = text_json(raw) else {
+            continue;
+        };
+        saw_json = true;
+        if snippet.is_empty() {
+            snippet = truncate(raw, 200);
+        }
+        if let Some(secret) = secret_from_json(&value) {
+            return Ok(secret);
+        }
+    }
+
+    let tail = if !stderr.trim().is_empty() {
+        stderr.as_str()
+    } else {
+        extra.as_str()
+    };
     if !out.success {
         bail!(
             "客户端返回非零退出码 {}：{}",
             out.code.unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
+            truncate(tail, 200)
         );
     }
+    if saw_json {
+        bail!("输出中缺少 atRestSecretKey 字段：{snippet}");
+    }
+    if stdout.trim().is_empty() && stderr.trim().is_empty() && extra.trim().is_empty() {
+        bail!("客户端没有任何输出（退出码 0）：这个 exe 多半是启动器/更新器，不是客户端主程序");
+    }
+    bail!(
+        "客户端输出里找不到 JSON（stdout: {} / stderr: {} / file: {}）",
+        truncate(&stdout, 120),
+        truncate(&stderr, 120),
+        truncate(&extra, 120)
+    )
+}
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    // 优先 stdout；没有花括号就看 stderr
-    let raw = if stdout.contains('{') {
-        stdout.as_ref()
-    } else {
-        stderr.as_ref()
-    };
-    // 少数版本会把整个 JSON 再包成一层字符串（首尾带引号、内部转义）
+/// 从一段可能混着日志的文本里取出 JSON。
+fn text_json(raw: &str) -> Option<Value> {
     let trimmed = raw.trim();
-    let unwrapped: String = serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    if trimmed.is_empty() {
+        return None;
+    }
+    // 少数版本会把整个 JSON 再包成一层字符串（首尾带引号、内部转义）
+    let unwrapped: String =
+        serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    let slice = extract_json(&unwrapped)?;
+    serde_json::from_str::<Value>(slice).ok()
+}
 
-    let json_slice = extract_json(&unwrapped).ok_or_else(|| {
-        anyhow!(
-            "客户端输出里找不到 JSON（stdout: {} / stderr: {}）",
-            truncate(&stdout, 160),
-            truncate(&stderr, 160)
-        )
-    })?;
-    let value: Value = serde_json::from_str(json_slice).context("密钥输出不是合法 JSON")?;
-
+fn secret_from_json(value: &Value) -> Option<String> {
     value
         .get("atRestSecretKey")
-        .or_else(|| value.get("data").and_then(|d| d.get("atRestSecretKey")))
+        .or_else(|| value.get("data")?.get("atRestSecretKey"))
         .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string())
-        .ok_or_else(|| anyhow!("输出中缺少 atRestSecretKey 字段：{}", truncate(json_slice, 200)))
 }
 
 /// 从可能混有日志的输出里截出第一个 `{` 到最后一个 `}`。
@@ -506,7 +860,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn parses_install_icon_line() {
         assert_eq!(
@@ -557,15 +910,53 @@ mod tests {
     }
 
     #[test]
-    fn cache_matches_exe_and_ttl() {
-        let exe = PathBuf::from("C:/x/WorkBuddy.exe");
+    fn cache_hits_regardless_of_path() {
+        // 取到密钥的可能是候选里的第二个（第一个是启动器），缓存不能按路径失效
         let entry = CachedSecret {
-            exe: exe.clone(),
             secret: "k".into(),
             at: Instant::now(),
         };
-        assert!(entry.exe == exe && entry.at.elapsed() < SECRET_TTL);
-        assert!(entry.exe != PathBuf::from("C:/y/WorkBuddy.exe"));
+        assert!(entry.at.elapsed() < SECRET_TTL);
+        assert_eq!(entry.secret, "k");
+    }
+
+    #[test]
+    fn parses_secret_from_file_fallback() {
+        // 另一台电脑上 stdout / stderr 都是空的，只有脚本写出的临时文件里有内容
+        let out = captured(true, Some(0), "", "");
+        let extra = r#"{"version":1,"atRestSecretKey":"fromfile"}"#;
+        assert_eq!(parse_secret_output_with(&out, Some(extra)).unwrap(), "fromfile");
+    }
+
+    #[test]
+    fn explains_silent_launcher() {
+        let out = captured(true, Some(0), "", "");
+        let err = parse_secret_output_with(&out, None).unwrap_err().to_string();
+        assert!(err.contains("没有任何输出"), "{err}");
+    }
+
+    #[test]
+    fn reports_script_error_from_file() {
+        let out = captured(false, Some(1), "", "");
+        let extra = "SCRIPT_ERROR: TypeError: process._linkedBinding is not a function";
+        let err = parse_secret_output_with(&out, Some(extra)).unwrap_err().to_string();
+        assert!(err.contains("非零退出码 1"), "{err}");
+        assert!(err.contains("_linkedBinding"), "{err}");
+    }
+
+    #[test]
+    fn detects_electron_layout() {
+        let dir = std::env::temp_dir().join(format!("hub-electron-test-{}", std::process::id()));
+        let exe = dir.join("WorkBuddy.exe");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&exe, b"stub").unwrap();
+        // 只有 exe、没有 resources：启动器
+        assert!(!looks_like_electron_app(&exe));
+
+        std::fs::create_dir_all(dir.join("resources")).unwrap();
+        std::fs::write(dir.join("resources/app.asar"), b"asar").unwrap();
+        assert!(looks_like_electron_app(&exe));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]

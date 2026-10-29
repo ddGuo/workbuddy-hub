@@ -438,7 +438,13 @@ fn run_checkins(
         let today = hub_core::format_date(hub_core::now_secs());
 
         let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
-        let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+        // 手动点「立即签到」时不给失败冷却挡路
+        let secret = (if force {
+            client_compat::at_rest_secret_force(&exe)
+        } else {
+            client_compat::at_rest_secret(&exe)
+        })
+        .map_err(|e| e.to_string())?;
         let key = AtRestKey::from_secret(&secret);
         let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
         let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
@@ -547,7 +553,8 @@ async fn export_credentials(path: String, password: String) -> Result<usize, Str
 
 fn export_credentials_blocking(path: &str, password: &str) -> Result<usize, String> {
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
-    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    // 用户点的导出，绕过取密钥的失败冷却
+    let secret = client_compat::at_rest_secret_force(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
     let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
@@ -600,7 +607,8 @@ fn import_credentials_blocking(
     let payload = portable::open(&text, password).map_err(|e| e.to_string())?;
 
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
-    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    // 用户点的导入，绕过取密钥的失败冷却
+    let secret = client_compat::at_rest_secret_force(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
     let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建账号库目录失败：{e}"))?;
@@ -660,7 +668,8 @@ async fn probe_model(uid: String, model: String) -> Result<model_probe::ProbeRes
 
 fn probe_model_blocking(uid: &str, model: &str) -> Result<model_probe::ProbeResult, String> {
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe，无法取账号密钥")?;
-    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    // 点「验证」是手动动作，绕过失败冷却
+    let secret = client_compat::at_rest_secret_force(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
     let dir = client_compat::accounts_dir().map_err(|e| e.to_string())?;
     let accounts = account_store::load(&dir).map_err(|e| e.to_string())?;
@@ -866,7 +875,8 @@ fn autostart_set(enabled: bool) -> Result<bool, String> {
     {
         if enabled {
             let exe = std::env::current_exe().map_err(|e| format!("取程序路径失败：{e}"))?;
-            let value = format!("\"{}\"", exe.display());
+            // 带上 `--hidden`：开机时只在托盘起来，不抢前台
+            let value = format!("\"{}\" {HIDDEN_FLAG}", exe.display());
             let ok = hub_core::proc::hidden("reg")
                 .args([
                     "add",
@@ -897,6 +907,51 @@ fn autostart_set(enabled: bool) -> Result<bool, String> {
     {
         let _ = enabled;
         Err("开机自启目前只支持 Windows".into())
+    }
+}
+
+/// 把老的自启项补成带 `--hidden` 的版本。
+///
+/// 0.1.12 及以前写的是 `"…\workbuddy-hub.exe"`，开机后窗口直接摆到桌面上；
+/// 用户没有重新点过开关的话，注册表里还是旧值，所以启动时顺手迁移一次。
+fn migrate_autostart_hidden() {
+    #[cfg(target_os = "windows")]
+    {
+        let Ok(out) = hub_core::proc::hidden("reg")
+            .args(["query", RUN_KEY, "/v", RUN_NAME])
+            .output()
+        else {
+            return;
+        };
+        if !out.status.success() {
+            return; // 没开自启
+        }
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        if text.to_lowercase().contains(HIDDEN_FLAG) {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        // 只改指向自己的那一项，别把别的安装路径覆盖成当前路径
+        let mine = exe.display().to_string().to_lowercase();
+        if !text.to_lowercase().contains(mine.as_str()) {
+            return;
+        }
+        let value = format!("\"{}\" {HIDDEN_FLAG}", exe.display());
+        let _ = hub_core::proc::hidden("reg")
+            .args([
+                "add",
+                RUN_KEY,
+                "/v",
+                RUN_NAME,
+                "/t",
+                "REG_SZ",
+                "/d",
+                value.as_str(),
+                "/f",
+            ])
+            .output();
     }
 }
 
@@ -934,7 +989,8 @@ fn switch_apply_blocking(app: &tauri::AppHandle, target: &str) -> Result<String,
     let exe = client_compat::find_exe().ok_or("找不到 WorkBuddy.exe")?;
 
     let _ = app.emit("switch-progress", "正在读取账号密钥…");
-    let secret = client_compat::at_rest_secret(&exe).map_err(|e| e.to_string())?;
+    // 用户主动点的确认，绕过失败冷却：上一次失败可能只是客户端刚在启动
+    let secret = client_compat::at_rest_secret_force(&exe).map_err(|e| e.to_string())?;
     let key = AtRestKey::from_secret(&secret);
 
     // 切之前先问服务端这个令牌还认不认。失效的账号写进去，客户端启动后
@@ -1004,15 +1060,42 @@ fn resolve_target_uid(target: Option<String>) -> Result<String, String> {
     }
 }
 
-/// 把主窗口拉回前台（托盘菜单 / 双击托盘图标都走这里）。
-fn show_main(app: &tauri::AppHandle) {
+/// 把主窗口拉回前台（托盘菜单 / 双击托盘图标 / 第二个实例都走这里）。
+///
+/// `reason` 只写进 `~/.workbuddy-hub/window.log`：这个行为在别的电脑上偶发，
+/// 没有日志就只能靠猜是托盘误触还是互斥端口被扫。
+fn show_main(app: &tauri::AppHandle, reason: &str) {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("main") {
+        log_window_event(reason);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
         nudge_repaint(&w);
     }
+}
+
+/// 窗口事件日志，保留最近 300 行。
+fn log_window_event(reason: &str) {
+    let Ok(dir) = client_compat::hub_dir() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("window.log");
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = old.lines().collect();
+    if lines.len() > 300 {
+        lines = lines[lines.len() - 300..].to_vec();
+    }
+    let mut body = lines.join("\n");
+    if !body.is_empty() {
+        body.push('\n');
+    }
+    body.push_str(&format!(
+        "{} {reason}\n",
+        hub_core::format_ts(hub_core::now_secs())
+    ));
+    let _ = std::fs::write(path, body);
 }
 
 enum Instance {
@@ -1024,31 +1107,75 @@ enum Instance {
     PortBusy,
 }
 
+/// 互斥端口。第二个实例连上来时先发一句口令，主实例回了 `OK` 才算数。
+const INSTANCE_PORT: u16 = 47821;
+/// 口令：不是这个字节串的连接一律忽略。
+///
+/// 以前收到任何连接就把窗口 `show()` 出来 —— 端口扫描、安全软件的探活、
+/// 别的程序恰好用到 47821，都会让窗口莫名其妙弹到前台。
+const INSTANCE_MAGIC: &[u8] = b"WBHUB/SHOW/1";
+const INSTANCE_ACK: &[u8] = b"OK";
+/// 开机自启时带的参数：不抢前台，只在托盘里等。
+const HIDDEN_FLAG: &str = "--hidden";
+
 /// 用 127.0.0.1:47821 做互斥。
 ///
 /// 必须在**建窗口之前**调用：放在 setup 里的话，第二个进程会先建出一个
 /// 黑窗口，再被退出逻辑杀掉，用户看到的就是一次黑屏闪烁。
 fn claim_instance() -> Instance {
-    use std::io::Write;
-    use std::net::{TcpListener, TcpStream};
-    const PORT: u16 = 47821;
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::time::Duration;
 
-    match TcpListener::bind(("127.0.0.1", PORT)) {
+    match TcpListener::bind(("127.0.0.1", INSTANCE_PORT)) {
         Ok(listener) => Instance::Primary(listener),
         Err(_) => {
-            // 端口被占：只有对面真的收下消息，才认定是已有实例；
+            // 端口被占：只有对面真的按口令回了 OK，才认定是已有实例；
             // 否则可能只是别的程序占了这个端口，照常启动。
-            let signaled = TcpStream::connect(("127.0.0.1", PORT))
-                .ok()
-                .and_then(|mut s| s.write_all(b"show").ok())
-                .is_some();
-            if signaled {
+            let addr = SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, INSTANCE_PORT));
+            let acked = (|| -> Option<bool> {
+                let mut s = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).ok()?;
+                s.set_write_timeout(Some(Duration::from_millis(400))).ok()?;
+                s.set_read_timeout(Some(Duration::from_millis(800))).ok()?;
+                s.write_all(INSTANCE_MAGIC).ok()?;
+                s.flush().ok()?;
+                let mut buf = [0u8; 2];
+                s.read_exact(&mut buf).ok()?;
+                Some(buf.as_slice() == INSTANCE_ACK)
+            })()
+            .unwrap_or(false);
+            if acked {
                 Instance::AlreadyRunning
             } else {
                 Instance::PortBusy
             }
         }
     }
+}
+
+/// 读一条「显示窗口」请求：口令对得上才算，顺手回一个 `OK`。
+fn accepts_show_request(mut stream: std::net::TcpStream) -> bool {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let mut buf = [0u8; 32];
+    let mut got = 0usize;
+    while got < INSTANCE_MAGIC.len() {
+        match stream.read(&mut buf[got..]) {
+            Ok(0) => break,
+            Ok(n) => got += n,
+            Err(_) => return false,
+        }
+    }
+    if got != INSTANCE_MAGIC.len() || &buf[..got] != INSTANCE_MAGIC {
+        log_window_event("instance:rejected");
+        return false;
+    }
+    let _ = stream.write_all(INSTANCE_ACK);
+    let _ = stream.flush();
+    true
 }
 
 /// WebView2 在窗口隐藏/恢复后偶尔只画一帧黑屏。
@@ -1074,6 +1201,9 @@ fn nudge_repaint(w: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 开机自启带 `--hidden`：只在托盘里起来，不把窗口摆到脸上
+    let start_hidden = std::env::args().skip(1).any(|a| a == HIDDEN_FLAG);
+
     // 单实例判定要在建窗口之前，避免第二个进程闪一个黑窗口
     let instance = claim_instance();
     if matches!(&instance, Instance::AlreadyRunning) {
@@ -1086,14 +1216,26 @@ pub fn run() {
         .setup(move |app| {
             use tauri::Manager;
 
-            // 首次显示时 WebView2 偶尔不跟随窗口完成布局，延后修正一次
-            if let Some(w) = app.get_webview_window("main") {
-                let fix = w.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    nudge_repaint(&fix);
-                });
+            // 窗口在 tauri.conf.json 里是 visible=false，这里决定要不要显示：
+            // 手动启动立刻显示；开机自启留在托盘。
+            if !start_hidden {
+                show_main(app.handle(), "startup");
             }
+
+            // 首次显示时 WebView2 偶尔不跟随窗口完成布局，延后修正一次
+            if !start_hidden {
+                if let Some(w) = app.get_webview_window("main") {
+                    let fix = w.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        nudge_repaint(&fix);
+                    });
+                }
+            }
+
+            // 老版本写进注册表的自启项没有 `--hidden`，开机时会把窗口摆到脸上。
+            // 这里补上（只改自己那条路径，别的值不动）。
+            migrate_autostart_hidden();
 
             // 托盘常驻：这是后台应用，关掉窗口不等于退出
             use tauri::menu::{Menu, MenuItem};
@@ -1115,7 +1257,7 @@ pub fn run() {
 
             builder
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => show_main(app),
+                    "show" => show_main(app, "tray-menu"),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -1126,17 +1268,20 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        show_main(tray.app_handle());
+                        show_main(tray.app_handle(), "tray-click");
                     }
                 })
                 .build(app)?;
 
-            // 主实例负责接受「显示窗口」的请求
+            // 主实例负责接受「显示窗口」的请求：口令对不上就忽略，
+            // 不能让任意本地连接把窗口弹到前台。
             if let Instance::Primary(listener) = instance {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    for _ in listener.incoming().flatten() {
-                        show_main(&handle);
+                    for stream in listener.incoming().flatten() {
+                        if accepts_show_request(stream) {
+                            show_main(&handle, "instance");
+                        }
                     }
                 });
             }
@@ -1167,11 +1312,9 @@ pub fn run() {
             // 限流监听：每 5 秒扫一次最近会话（有 mtime 缓存，基本只剩 stat），
             // 发现新的限流就推给界面做右下角提醒。
             {
-                use std::collections::HashSet;
                 use tauri::Emitter;
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
-                    let mut seen: HashSet<String> = HashSet::new();
                     loop {
                         std::thread::sleep(std::time::Duration::from_secs(5));
                         let Ok(db) = db_path() else { continue };
@@ -1183,9 +1326,15 @@ pub fn run() {
                         let Ok((runtime_path, _, _)) = daemon::hub_paths() else {
                             continue;
                         };
+                        // `alerted` 是持久化的「已经提醒过」：以前只放在内存里，
+                        // 于是每次启动 hub 都会把十分钟内的限流重播一遍——
+                        // 界面上看起来就是自己弹出了「账号被限流 · 切换到 xxx」。
                         let mut state = daemon::RuntimeState::load(&runtime_path);
-                        state.handled.clear();
-                        let signals = daemon::scan(&tasks, &projects, &mut state);
+                        // scan 的 handled 是给 daemon 动作去重用的，别被界面提醒污染
+                        let mut scan_state = daemon::RuntimeState::load(&runtime_path);
+                        scan_state.handled.clear();
+                        let signals = daemon::scan(&tasks, &projects, &mut scan_state);
+                        let mut alerted = false;
 
                         if let Some(auth) = client_compat::auth_file() {
                             let _ = auth_seen::refresh(&auth);
@@ -1217,10 +1366,17 @@ pub fn run() {
                             if now - sig.detected_at > 600 {
                                 continue;
                             }
+                            // 这条已经提醒过（可能在上一轮进程里）就不再弹
                             let key = format!("{}@{}", sig.session_id, sig.detected_at);
-                            if !seen.insert(key) {
+                            if state.alerted.iter().any(|k| k == &key) {
                                 continue;
                             }
+                            state.alerted.push(key);
+                            if state.alerted.len() > 400 {
+                                let cut = state.alerted.len() - 400;
+                                state.alerted.drain(0..cut);
+                            }
+                            alerted = true;
                             let next_uid = daemon::pick_next(&accounts, &state, &current, now)
                                 .filter(|a| a.uid != sig.uid)
                                 .map(|a| a.uid);
@@ -1267,6 +1423,11 @@ pub fn run() {
                                 },
                             );
                         }
+
+                        // 只有真的提醒过才落盘：避免每 5 秒重写一次状态文件
+                        if alerted {
+                            state.save(&runtime_path);
+                        }
                     }
                 });
             }
@@ -1299,14 +1460,18 @@ pub fn run() {
                 });
             }
 
-            // 账号资料：启动 8 秒后补一次（只有缺失或超过 7 天的才会真请求）
+            // 账号资料：启动 8 秒后补一次（只有缺失或超过 7 天的才会真请求），
+            // 之后每 10 分钟补一次 —— 取密钥失败一次不应该让手机号一直空着。
             {
                 use tauri::Emitter;
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(8));
-                    if let Ok(store) = profiles_refresh_blocking(None) {
-                        let _ = handle.emit("profiles-updated", store);
+                    loop {
+                        if let Ok(store) = profiles_refresh_blocking(None) {
+                            let _ = handle.emit("profiles-updated", store);
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(600));
                     }
                 });
             }

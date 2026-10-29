@@ -42,6 +42,7 @@ hub 在切号时会把已有会话的归属改到新账号，于是：
 - **账号自动存档**：客户端登录一个新账号，hub 就存一份到自己的账号库，不再依赖外部工具
 - **账号识别**：列表显示脱敏手机号（如 `199****9283`）、签到天数与**剩余积分**，没有手机号时回退昵称 / uid
 - **侧栏可收起**：底部签到 / 归集 / 客户端信息面板一键收起，账号多时列表更宽松
+- **删除账号**：账号行「删除」只清掉本机存档，当前账号不可删；删过的账号不会被旧账号库导入带回来
 - **凭据导出 / 导入**：账号库整体导出成一个密码加密的文件（PBKDF2-HMAC-SHA256 +
   AES-256-GCM），换电脑后导入，会用本机 at-rest 密钥重新封装，不用逐台重新登录。
   文件里是明文令牌的密文，**密码丢了无法恢复**，别走公开渠道传。
@@ -258,6 +259,8 @@ hub checkin --uid 128a8f9c    # 只处理一个账号
 
 开机自启没有引入插件，直接写注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
 的 `WorkBuddyHub` 项：只影响当前用户，不需要管理员权限，卸载时删掉该项即可。
+写入的值带 `--hidden`，开机时只在托盘里起来、不把窗口摆到桌面上；手动从开始菜单启动
+照常显示窗口。
 
 重复启动不会开出第二个实例：第二个进程通过 `127.0.0.1:47821` 通知已有实例把窗口
 拉到前台，然后自己退出。端口被别的程序占用时照常启动，只是失去互斥能力。
@@ -285,10 +288,12 @@ hub checkin --uid 128a8f9c    # 只处理一个账号
 
 ## 命令行
 
-`hub` 在 `target/debug/hub`（`cargo build` 后）。
+`hub` 在 `target/debug/hub`（`cargo build` 后），`cargo build --release -p hub-cli`
+产出单文件 `target/release/hub.exe`，发布包里也会带一份，拷到别的电脑上直接能跑。
 
 ```bash
 hub probe                 # 探测客户端位置、凭据文件、数据目录
+hub secret                # 逐个候选试探 at-rest 密钥，报告每处的结果（不打印密钥）
 hub accounts              # 账号库总览：任务数、凭据到期、哪些是空号
 hub tasks                 # 所有账号的任务（--uid <前缀> 过滤）
 hub verify                # 用 at-rest 密钥逐个解密账号凭据
@@ -351,6 +356,7 @@ workbuddy-hub/
 | 客户端凭据 | `%LOCALAPPDATA%\CodeBuddyExtension\Data\Public\auth\workbuddy-desktop.info` |
 | 账号库（自动存档） | `~/.workbuddy-hub/accounts/<uid>.json` |
 | hub 状态 | `~/.workbuddy-hub/`：`ownership.json`、`runtime.json`、`checkin.json`、`profiles.json`、`backups/` |
+| 排查日志 | `~/.workbuddy-hub/`：`secret-probe.log`（取密钥失败原因）、`window.log`（窗口被叫到前台的原因） |
 
 凭据格式与加解密细节见[技术说明第十节](docs/workbuddy-hub-技术说明.md)。
 
@@ -401,6 +407,41 @@ hub 会在切换前先校验：**访问令牌还没到期却返回 401**（说�
 新版客户端 `loggerGet()` 可能返回对象而不是字符串，旧代码用 `String(...)` 会得到
 `[object Object]`。0.1.11 改为：字符串原样输出、其它类型 `JSON.stringify`；解析端也兼容
 字符串包一层的 JSON、stderr 输出和 `data.atRestSecretKey`。
+
+0.1.13 又补了三处 —— 这个错在别的电脑上仍然出现，报的是
+`客户端输出里找不到 JSON（stdout: / stderr: ）`，**两头都是空的**：
+
+| 原因 | 处理 |
+|---|---|
+| Windows 上 `process.stdout.write` 是异步的，脚本写完就退出，输出整段丢掉 | 脚本改 `fs.writeSync`，并**另写一份临时文件**，stdout 为空时回读 |
+| 找到的 `WorkBuddy.exe` 只是启动器/更新器（目录里没有 `resources/app.asar`），收参数、不执行、静默退 0 | 探测优先挑真正的 Electron 主程序，失败后再依次试其它候选 |
+| 客户端把 Electron 的 `RunAsNode` fuse 关掉了，`ELECTRON_RUN_AS_NODE` 直接失效；再启动一次只会把客户端窗口叫到前台 | 先读 exe 里的 fuse 字节判断，明确关掉的不再尝试，直接报「这个版本读不出密钥」 |
+| 失败不缓存，30 秒一轮的积分刷新反复起进程（在「客户端不认 Node 模式」的机器上，每起一次就把客户端窗口叫到前台一次） | 失败也记冷却（普通 2 分钟、结构化原因 30 分钟），手动点按钮时绕过 |
+
+对应地，签到、剩余积分、手机号都要靠这把密钥；取不到时这三处会一起空掉。
+换电脑后再遇到，先跑一条命令看结论：
+
+```bash
+hub secret      # 逐个候选报告结果，不打印密钥本身
+```
+
+失败详情也会写进 `~/.workbuddy-hub/secret-probe.log`。
+
+**窗口有时自己跑到前台，或者自己弹出「账号被限流 · 切换到 xxx」。**
+0.1.13 修了三个来源：
+
+1. **互斥端口不再见谁信谁。** 以前第二个实例往 `127.0.0.1:47821` 写什么、甚至只是
+   端口扫描器连上来，主实例都会把窗口 `show()` 出来。现在要口令 + `OK` 应答
+   （`WBHUB/SHOW/1`），对不上直接忽略；端口被别的程序占着时也不会误判成
+   「已有实例」而静默退出。
+2. **开机自启不再抢前台。** 自启项改成 `"…\workbuddy-hub.exe" --hidden`，
+   启动时只在托盘里待着；老版本写下的自启项会在下次启动时自动补上这个参数。
+3. **限流提醒不重播。** 「已经提醒过」从内存挪到了 `runtime.json` 的 `alerted`，
+   重启 hub 不会把十分钟内的旧限流再弹一遍；窗口在托盘里时也不再攒一张看不见的卡片，
+   只发系统通知。
+
+如果还遇到，`~/.workbuddy-hub/window.log` 会写清每次窗口被叫到前台的原因
+（`startup` / `tray-click` / `tray-menu` / `instance`），把最后几行发出来即可定位。
 
 **切换时提示找不到 WorkBuddy.exe。**
 0.1.9 起会额外查注册表卸载项与开始菜单快捷方式，覆盖非标准安装目录；结果会缓存。
