@@ -12,6 +12,7 @@ use hub_core::checkin;
 use hub_core::credit;
 use hub_core::model_probe;
 use hub_core::client_compat;
+use hub_core::client_control;
 use hub_core::daemon;
 use hub_core::profile;
 use hub_core::switch_engine;
@@ -30,6 +31,7 @@ fn main() -> Result<()> {
 
     match cmd {
         "probe" => cmd_probe(),
+        "quit-client" => cmd_quit_client(&args[1..]),
         "secret" => cmd_secret(),
         "accounts" => cmd_accounts(),
         "tasks" => cmd_tasks(&args[1..]),
@@ -75,6 +77,41 @@ fn print_help() {
     println!("  probe-model 探测模型限流：hub probe-model --uid <前缀> --model <id>");
     println!("  profile    读取账号资料（昵称 / 脱敏手机号）：hub profile [--uid <前缀>]");
     println!("  authhash   输出客户端凭据的哈希，用于与 TS 实现对拍");
+    println!("  quit-client 结束客户端进程（排查切号失败）：hub quit-client [--status] [--start]");
+}
+
+/// 结束客户端进程，用来单独验证切号里最容易失败的一步。
+fn cmd_quit_client(args: &[String]) -> Result<()> {
+    println!("== 客户端进程 ==");
+    let before = client_control::pids();
+    println!("  当前 PID   : {before:?}");
+    if args.iter().any(|a| a == "--status") {
+        return Ok(());
+    }
+    if before.is_empty() {
+        println!("  客户端未运行");
+    } else {
+        let started = std::time::Instant::now();
+        let graceful = client_control::quit(client_control::QUIT_TIMEOUT)?;
+        println!(
+            "  结束方式   : {}（耗时 {:.1}s）",
+            if graceful { "正常退出" } else { "强制结束" },
+            started.elapsed().as_secs_f32()
+        );
+        println!("  剩余 PID   : {:?}", client_control::pids());
+    }
+
+    if args.iter().any(|a| a == "--start") {
+        let exe = client_compat::find_exe().context("找不到 WorkBuddy.exe")?;
+        client_control::start(&exe)?;
+        let ok = client_control::wait_started(client_control::START_TIMEOUT);
+        println!(
+            "  已启动     : {}{}",
+            exe.display(),
+            if ok { "" } else { "（等待超时，可能启动较慢）" }
+        );
+    }
+    Ok(())
 }
 
 fn cmd_probe() -> Result<()> {
