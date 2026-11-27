@@ -1357,6 +1357,9 @@ pub fn run() {
                             .map(|s| s.uid.clone())
                             .unwrap_or_default();
 
+                        // 自动切号要避开仍在限流的账号（包括刚扫到的这一批）
+                        let limited = daemon::limited_uids(&signals, now);
+
                         for mut sig in signals {
                             // 按消息时间归属到当时在线的账号
                             if let Some(uid) = history.owner_at(sig.detected_at) {
@@ -1377,9 +1380,16 @@ pub fn run() {
                                 state.alerted.drain(0..cut);
                             }
                             alerted = true;
-                            let next_uid = daemon::pick_next(&accounts, &state, &current, now)
-                                .filter(|a| a.uid != sig.uid)
-                                .map(|a| a.uid);
+                            let next_uid =
+                                daemon::pick_next(&accounts, &state, &current, now, &limited)
+                                    .filter(|a| a.uid != sig.uid)
+                                    .map(|a| a.uid);
+                            // 记进冷却表：下一次挑选（以及 CLI watch）也知道这个账号刚被限流
+                            let until = sig.cooldown_until(
+                                now,
+                                state.cooldowns.get(&sig.uid).map(|c| c.strikes).unwrap_or(0),
+                            );
+                            state.mark(&sig.uid, until, &sig.message);
                             // 窗口不在前台时补一条系统通知，托盘状态下也能看到
                             let focused = handle
                                 .get_webview_window("main")

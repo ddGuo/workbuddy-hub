@@ -757,6 +757,8 @@ fn cmd_watch(args: &[String]) -> Result<()> {
             }
         }
 
+        let limited = daemon::limited_uids(&signals, now);
+
         for sig in &signals {
             let uid_short: String = sig.uid.chars().take(8).collect();
             let until = sig.cooldown_until(now, state.cooldowns.get(&sig.uid).map(|c| c.strikes).unwrap_or(0));
@@ -783,7 +785,7 @@ fn cmd_watch(args: &[String]) -> Result<()> {
             let auth_path = client_compat::auth_file()
                 .ok_or_else(|| anyhow::anyhow!("找不到凭据文件"))?;
             let current = switch_engine::current_uid(&auth_path)?;
-            let Some(target) = daemon::pick_next(&accounts, &state, &current, now) else {
+            let Some(target) = daemon::pick_next(&accounts, &state, &current, now, &limited) else {
                 println!("  动作   : 没有可用账号，全部在冷却中");
                 continue;
             };

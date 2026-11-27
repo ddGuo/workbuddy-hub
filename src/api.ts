@@ -187,6 +187,16 @@ export async function scanLimits(): Promise<LimitSignal[]> {
         detected_at: Math.floor(Date.now() / 1000) - 120,
         model: 'glm-5.2',
       },
+      {
+        // 账号额度级限流：换模型也没用，界面标红
+        session_id: '9ad10b58',
+        uid: '8bc5fd09-3730-4a8a-9182-6dadb2a1b058',
+        message: '429 当前账号使用量已超出频率限制（预览数据）',
+        kind: 'account',
+        reset_at: null,
+        detected_at: Math.floor(Date.now() / 1000) - 600,
+        model: null,
+      },
     ];
   }
   return invoke<LimitSignal[]>('scan_limits');

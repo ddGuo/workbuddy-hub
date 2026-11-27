@@ -192,7 +192,13 @@ limit pops a **bottom-right notification** (plus a system notification when the 
 the foreground, naming the model): "switch to xxx" performs the switch right away
 (falling back to the confirmation dialog when tasks are running), while "verify" sends a real
 `max_tokens=1` request with that account's credentials to confirm with the server.
-Hovering the "switch" button shows a popover listing the models currently limited for that account.
+Limited accounts are tagged **"限流"** right in the list: amber for a single model, red for an
+account-level quota. Hovering the tag shows which model, when the limit started, when it resets
+and how long is left (or "no reset time given" when the upstream omits it); the "switch" button
+tooltip shows the same details.
+
+Automatic switching **skips accounts that are still limited** (same predicate as the UI tag), so it
+never bounces a task onto another limited account — when everything is limited it stays put.
 
 Manual probe: `hub probe-model --uid <prefix> --model <model id>`.
 

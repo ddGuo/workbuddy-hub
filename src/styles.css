@@ -702,6 +702,33 @@ input {
   color: var(--accent);
 }
 
+/* 限流标记：账号行上直接可见；悬停出浮层，写明限流时间与恢复时间 */
+.limit-tag {
+  height: 16px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: help;
+}
+
+/* 账号额度级限流：换模型也没用，只能换号 */
+.limit-tag.account {
+  border-color: color-mix(in srgb, var(--err) 50%, transparent);
+  background: var(--err-soft);
+  color: var(--err);
+}
+
+.account.limited .avatar {
+  filter: grayscale(0.65);
+}
+
 .account-sub {
   display: flex;
   align-items: center;
@@ -1785,14 +1812,15 @@ input {
 .hover-tip {
   position: fixed;
   z-index: 200;
-  max-width: 240px;
+  /* 限流浮层要放下「模型 · 限流时间 · 恢复时间（剩 N 分钟）」一行 */
+  max-width: 320px;
   padding: 7px 9px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
   color: var(--ink);
   font-size: 11px;
-  line-height: 1.55;
+  line-height: 1.65;
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
   pointer-events: none;
 }

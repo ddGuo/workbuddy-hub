@@ -112,6 +112,16 @@ function fmtDate(sec: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/** 剩余时长：45 分钟 / 2 小时 10 分。 */
+function fmtLeft(sec: number): string {
+  if (sec <= 0) return '即将恢复';
+  const m = Math.ceil(sec / 60);
+  if (m < 60) return `${m} 分钟`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h} 小时 ${rest} 分` : `${h} 小时`;
+}
+
 function shortPath(p: string): string {
   const parts = p.split(/[\\/]/).filter(Boolean);
   return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : p;
@@ -210,9 +220,11 @@ export default function App() {
     if (isTauri) return null;
     if (new URLSearchParams(window.location.search).get('tip') !== '1') return null;
     return {
-      text: 'Deepseek-V4.1-Flash · 10-23 09:51 恢复\nKimi-K2 · 10-23 12:00 恢复',
+      text:
+        'glm-5.2 · 今天 14:38 限流 · 今天 15:04 恢复（剩 24 分钟）\n' +
+        '账号额度 · 今天 14:20 限流 · 未给出恢复时间',
       left: 250,
-      top: 335,
+      top: 120,
     };
   });
   const [cardsOpen, setCardsOpen] = useState(
@@ -564,15 +576,37 @@ export default function App() {
     );
   }, [limits]);
 
+  /** uid -> 当前仍在生效的限流（同一模型只留最新一条），界面标记与自动选号共用。 */
+  const limitsByUid = useMemo(() => {
+    const now = Date.now() / 1000;
+    const m = new Map<string, LimitSignal[]>();
+    for (const l of limits) {
+      if (l.detected_at > 0 && now - l.detected_at >= 24 * 3600) continue;
+      if (l.reset_at != null && l.reset_at <= now) continue;
+      const key = `${l.kind}:${l.model ?? ''}`;
+      const arr = m.get(l.uid) ?? [];
+      // 同模型被限流多次时只保留最近一次，避免浮层里刷出一串
+      if (!arr.some((x) => `${x.kind}:${x.model ?? ''}` === key)) arr.push(l);
+      m.set(l.uid, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => b.detected_at - a.detected_at);
+    return m;
+  }, [limits]);
+
   const limitAlt = useMemo(() => {
     if (!activeLimit) return null;
     const now = Date.now() / 1000;
     return (
       accounts.find(
-        (a) => a.uid !== activeLimit.uid && a.uid !== current && a.refresh_expires_at > now,
+        (a) =>
+          a.uid !== activeLimit.uid &&
+          a.uid !== current &&
+          a.refresh_expires_at > now &&
+          // 自动推荐要避开同样被限流的账号
+          !limitsByUid.has(a.uid),
       ) ?? null
     );
-  }, [accounts, activeLimit, current]);
+  }, [accounts, activeLimit, current, limitsByUid]);
 
   const nowSec = Math.floor(Date.now() / 1000);
   const isExpired = (a: AccountSummary) => a.refresh_expires_at <= nowSec;
@@ -592,17 +626,21 @@ export default function App() {
     });
   }
 
-  /** 该账号当前仍在限流的模型，用于切换按钮的 tooltip。 */
+  /** 该账号当前仍在限流的模型：限流时间 + 恢复时间 + 剩余，用于浮层。 */
   function limitTip(uid: string): string {
+    const arr = limitsByUid.get(uid) ?? [];
+    if (arr.length === 0) return '';
     const now = Date.now() / 1000;
-    return limits
-      .filter((l) => l.uid === uid && (l.reset_at == null || l.reset_at > now))
-      .map((l) =>
-        l.kind === 'account'
-          ? `账号额度 · ${l.reset_at ? `${fmtTime(l.reset_at)} 恢复` : '限流中'}`
-          : `${l.model ?? '单模型'} · ${l.reset_at ? `${fmtTime(l.reset_at)} 恢复` : '限流中'}`,
-      )
-      .join('\n');
+    const lines = arr.map((l) => {
+      const name = l.kind === 'account' ? '账号额度' : (l.model ?? '未知模型');
+      const at = l.detected_at ? `${fmtTime(l.detected_at)} 限流` : '限流中';
+      const until =
+        l.reset_at && l.reset_at > now
+          ? `${fmtTime(l.reset_at)} 恢复（剩 ${fmtLeft(l.reset_at - now)}）`
+          : '未给出恢复时间';
+      return `${name} · ${at} · ${until}`;
+    });
+    return lines.join('\n');
   }
 
   /** 点通知直接切号；有任务在跑时退回确认弹窗，避免直接打断。 */
@@ -1030,6 +1068,8 @@ export default function App() {
                 const expiredAcct = isExpired(a);
                 const cr = credits?.credits?.[a.uid];
                 const invalidToken = cr?.valid === false;
+                const acctLimits = limitsByUid.get(a.uid) ?? [];
+                const limited = acctLimits.length > 0;
                 const blocked = invalidToken
                   ? '登录态已失效，请先在客户端登录一次该账号'
                   : switchBlockReason(a);
@@ -1038,7 +1078,9 @@ export default function App() {
                     key={a.uid}
                     className={`account ${a.isCurrent ? 'current' : ''} ${
                       a.taskCount === 0 ? 'empty' : ''
-                    } ${expiredAcct || invalidToken ? 'expired' : ''}`}
+                    } ${expiredAcct || invalidToken ? 'expired' : ''} ${
+                      limited ? 'limited' : ''
+                    }`}
                     title={`${labelOf(a.uid, a.short_uid)}${
                       profiles?.profiles?.[a.uid]?.nickname
                         ? `（${profiles.profiles[a.uid].nickname}）`
@@ -1059,6 +1101,23 @@ export default function App() {
                         {invalidToken ? (
                           <span className="expired-text" title="服务端已不认这个账号的令牌">
                             登录失效
+                          </span>
+                        ) : limited ? (
+                          <span
+                            className={`limit-tag ${
+                              acctLimits.some((l) => l.kind === 'account') ? 'account' : ''
+                            }`}
+                            onMouseEnter={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setHoverTip({
+                                text: limitTip(a.uid),
+                                left: Math.min(r.left, window.innerWidth - 300),
+                                top: r.bottom + 8,
+                              });
+                            }}
+                            onMouseLeave={() => setHoverTip(null)}
+                          >
+                            限流
                           </span>
                         ) : expiredAcct ? (
                           <span

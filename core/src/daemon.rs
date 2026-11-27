@@ -9,7 +9,7 @@
 use crate::client_control;
 use crate::rate_limit::{self, LimitSignal};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -138,18 +138,36 @@ pub fn scan(
     out
 }
 
-/// 从账号里挑下一个可用的：不在冷却、不是当前账号、凭据未过期。
+/// 当前仍处于限流状态的账号。
+///
+/// 自动切号必须避开这些账号：切到一个同样被限流的账号，等于把刚打断的任务
+/// 再打断一次。判定与界面上的「限流」标记保持一致——上游给了恢复时间就用它，
+/// 没给就按 24 小时内的信号算（没有恢复时间的限流只能靠重新探测确认）。
+pub fn limited_uids(signals: &[LimitSignal], now: i64) -> HashSet<String> {
+    signals
+        .iter()
+        .filter(|s| match s.reset_at {
+            Some(t) => t > now,
+            None => s.detected_at == 0 || now - s.detected_at < 24 * 3600,
+        })
+        .map(|s| s.uid.clone())
+        .collect()
+}
+
+/// 从账号里挑下一个可用的：不在冷却、不在限流、不是当前账号、凭据未过期。
 pub fn pick_next(
     accounts: &[crate::account_store::Account],
     state: &RuntimeState,
     current_uid: &str,
     now: i64,
+    limited: &HashSet<String>,
 ) -> Option<crate::account_store::Account> {
     accounts
         .iter()
         .filter(|a| a.uid != current_uid)
         .filter(|a| a.refresh_expires_at > now)
         .filter(|a| !state.is_cooling(&a.uid, now))
+        .filter(|a| !limited.contains(&a.uid))
         .max_by_key(|a| a.refresh_expires_at)
         .cloned()
 }
@@ -276,5 +294,54 @@ mod tests {
         assert!(s.is_cooling("uid_a", 1000));
         assert!(!s.is_cooling("uid_a", 3000));
         assert!(!s.is_cooling("uid_b", 1000));
+    }
+
+    fn sig(uid: &str, reset_at: Option<i64>, detected_at: i64) -> LimitSignal {
+        LimitSignal {
+            session_id: format!("s-{uid}"),
+            uid: uid.into(),
+            message: "429 限流".into(),
+            kind: rate_limit::LimitKind::Model,
+            reset_at,
+            detected_at,
+            model: Some("m".into()),
+        }
+    }
+
+    #[test]
+    fn limited_set_drops_expired_and_stale() {
+        let now = 10_000i64;
+        let set = limited_uids(
+            &[
+                sig("a", Some(now + 60), now),
+                sig("b", Some(now - 1), now),          // 已恢复
+                sig("c", None, now - 60),              // 没有恢复时间，仍在 24h 内
+                sig("d", None, now - 25 * 3600),       // 太旧
+            ],
+            now,
+        );
+        assert!(set.contains("a"));
+        assert!(!set.contains("b"));
+        assert!(set.contains("c"));
+        assert!(!set.contains("d"));
+    }
+
+    #[test]
+    fn pick_next_skips_limited_accounts() {
+        let acct = |uid: &str, exp: i64| crate::account_store::Account {
+            uid: uid.into(),
+            file: format!("{uid}.json"),
+            path: std::path::PathBuf::new(),
+            domain: "www.workbuddy.cn".into(),
+            expires_at: exp,
+            refresh_expires_at: exp,
+            doc: serde_json::Value::Null,
+        };
+        let accounts = vec![acct("cur", 9000), acct("a", 8000), acct("b", 7000)];
+        let state = RuntimeState::default();
+        let limited: HashSet<String> = ["a".to_string()].into_iter().collect();
+
+        let picked = pick_next(&accounts, &state, "cur", 1000, &limited).unwrap();
+        assert_eq!(picked.uid, "b", "被限流的账号要跳过");
     }
 }
